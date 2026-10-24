@@ -15,6 +15,7 @@ import numpy as np
 
 from ksmauto.ksh import load_ksh
 from ksmauto.lint import FEATURES, level_features, stats
+from sdvxin_stats import usable
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "out" / "sdvxin_stats.jsonl"
@@ -28,10 +29,7 @@ def load():
     if CACHE.exists():
         for line in CACHE.read_text(encoding="utf-8").splitlines():
             r = json.loads(line)
-            if "error" in r:
-                continue
-            # Skip charts whose chip count says the image decode went wrong.
-            if abs(r["decoded"]["chip"] - r["official"]["chip"]) > max(3, 0.005 * r["official"]["chip"]):
+            if not usable(r):
                 continue
             rows.append(("sdvxin", r["key"], r["level"], r["stats"]))
     return rows

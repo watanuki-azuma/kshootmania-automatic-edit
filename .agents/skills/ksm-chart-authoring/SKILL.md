@@ -71,6 +71,7 @@ uv run ksmauto render work/draft.ksmd --measures 0-31 -o work/page.png
 - lint: `hand-overload`（手が 3 本要る）、`fast-jack`（縦連が速すぎ）は原則ゼロにする。`unaligned` が出たら、音の無い位置のノーツを解析と照合して直す。`empty-loud` は意図した休憩でなければ埋める。
 - stats の `level_estimate` が目標 ±1.5 に入るまで密度を調整する。
 - render の PNG を開いて目で見る: 同じ形の繰り返しが単調すぎないか、レーザーとボタンが同じ手に重なっていないか、山場で密度が上がっているか。
+- 配置の偏りを `references/charting-guide.md` の「配置パターン」と比べる。レーザー中の空き手が C/D だけになっていないか（実譜面では FX-R と B が合わせて 4 割弱）、16 分が 1 つの形に偏っていないか。手元にコーパスがあれば `uv run python tests/eval/sdvxin_patterns.py --chart work/chart.kson` で同じ集計が出る。
 
 ### 5. 仕上げ
 

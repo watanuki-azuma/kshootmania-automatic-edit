@@ -258,9 +258,9 @@ def _bpm_at(chart, y):
 
 
 # Weighted least-squares fit (tests/eval/fit_level.py) on the 36 official charts
-# (levels 1-16) and ~870 local sdvx.in charts (17-20): MAE ~0.7 / ~0.9 levels.
-LEVEL_COEF = {"log_avg_nps": 3.913, "log_peak_nps": 1.777, "laser_ratio": 2.373,
-              "stream16_max_sec": 0.264, "knob_button_ratio": 6.161, "bias": 1.224}
+# (levels 1-16) and ~1600 local sdvx.in charts (17-20): MAE ~0.7 levels on both.
+LEVEL_COEF = {"log_avg_nps": 4.066, "log_peak_nps": 2.302, "laser_ratio": 2.463,
+              "stream16_max_sec": 0.102, "knob_button_ratio": 5.026, "bias": 0.106}
 FEATURES = tuple(k for k in LEVEL_COEF if k != "bias")
 
 

@@ -56,4 +56,5 @@ uv run pytest
 ## 精度（公式既定曲 10 曲）
 
 `uv run python tests/eval/eval_analyze.py`: BPM 10/10、拍の位相 9/10、小節頭 8/10。
-`uv run python tests/eval/fit_level.py`: レベル推定の平均誤差 0.7（公式 36 譜面）、0.9（sdvx.in Lv17〜20 の 866 譜面、手元にある場合）。
+`uv run python tests/eval/fit_level.py`: レベル推定の平均誤差 0.7（公式 36 譜面）、0.7（sdvx.in Lv17〜20 の 1607 譜面、手元にある場合）。
+`uv run python tests/eval/sdvxin_patterns.py`: 手元の sdvx.in 譜面から配置パターン（レーザー中の空き手のレーン、16 分の形など）を集計。`--chart` で自作譜面も同じ集計にかけられる。

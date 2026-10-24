@@ -21,12 +21,22 @@ SUMMARY = ('avg_nps', 'peak_nps', 'laser_ratio', 'slams', 'chord_ratio', 'stream
            'knob_move_ratio', 'knob_button_ratio', 'long_ratio', 'duration_sec')
 
 
+def usable(row):
+    """Trust a decoded chart only if its chip count and top BPM match the page."""
+    if 'error' in row or 'disp_bpm' not in row:
+        return False
+    chip, official = row['decoded']['chip'], row['official']['chip']
+    top = max(float(v) for v in row['disp_bpm'].split('-'))
+    return abs(chip - official) <= max(3, 0.005 * official) and abs(row['stats']['max_bpm'] - top) < 1
+
+
 def load_rows(roots):
     cached = {}
     if CACHE.exists():
         for line in CACHE.read_text(encoding='utf-8').splitlines():
             row = json.loads(line)
-            cached[row['key']] = row
+            if 'error' in row or 'disp_bpm' in row:  # older rows predate the BPM check
+                cached[row['key']] = row
     new = 0
     with CACHE.open('a', encoding='utf-8') as out:
         for root in roots:
@@ -37,7 +47,7 @@ def load_rows(roots):
                 try:
                     chart = load_sdvxin(path.parent)
                     row = {'key': meta['key'], 'level': float(meta['level']), 'kind': meta['kind'],
-                           'title': meta['title'], 'stats': stats(chart), 'decoded': sdvx_counts(chart),
+                           'title': meta['title'], 'disp_bpm': meta['bpm'], 'stats': stats(chart), 'decoded': sdvx_counts(chart),
                            'official': {k: int(meta['counts'][k] or 0) for k in ('chip', 'hold', 'laser')}}
                 except Exception as exc:  # noqa: BLE001 - report and keep going over the corpus
                     row = {'key': meta['key'], 'level': float(meta['level']), 'error': repr(exc)}
@@ -64,14 +74,17 @@ def main():
         print('  error', r['key'], r['error'])
     by_level = defaultdict(list)
     for r in good:
-        # Only trust charts whose chip count shows the decode is sound.
-        if abs(r['decoded']['chip'] - r['official']['chip']) <= max(3, 0.005 * r['official']['chip']):
+        if usable(r):
             by_level[int(r['level'])].append(r['stats'])
-    print('level  n  ' + '  '.join(f'{k:>10}' for k in SUMMARY))
+    print(f'{sum(map(len, by_level.values()))} usable (chip count and BPM match the page)')
+    print('level  n  ' + '  '.join(f'{k:>16}' for k in SUMMARY) + '   (median [q1-q3])')
     for level in sorted(by_level):
         group = by_level[level]
-        med = [statistics.median(s[k] for s in group) for k in SUMMARY]
-        print(f'{level:>5} {len(group):>3}  ' + '  '.join(f'{v:>10.2f}' for v in med))
+        cells = []
+        for k in SUMMARY:
+            q1, med, q3 = statistics.quantiles([s[k] for s in group], n=4)
+            cells.append(f'{med:.2f} [{q1:.2f}-{q3:.2f}]')
+        print(f'{level:>5} {len(group):>3}  ' + '  '.join(f'{c:>16}' for c in cells))
 
 
 if __name__ == '__main__':
