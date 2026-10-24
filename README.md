@@ -17,7 +17,7 @@ uv run pytest
 | コマンド | 内容 |
 |---|---|
 | `ksmauto analyze SONG.ogg -o a.json --text a.txt` | BPM・offset・小節頭・帯域別オンセット・セクションを解析 |
-| `ksmauto analyze SONG.ogg --tempo 0:141,53:138.4 --offset 1074 ...` | テンポが変わる曲: テンポマップと offset を指定して解析し直す |
+| `ksmauto analyze SONG.ogg --tempo 0:141,53:138.2 --offset 1074 ...` | テンポが変わる曲: テンポマップと offset を指定して解析し直す |
 | `ksmauto compile draft.ksmd -o chart.kson [--base orig.kson]` | DSL → KSON |
 | `ksmauto decompile chart.(kson\|ksh) -o draft.ksmd` | KSON/KSH → DSL |
 | `ksmauto convert chart.ksh -o chart.kson` | KSH → KSON |

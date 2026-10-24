@@ -70,9 +70,12 @@ input[type=range] { accent-color: var(--accent); }
       <label>HI-SPEED <input id="hispeed" type="range" min="3" max="12" step="0.5" value="6.5"></label>
       <label>速度 <select id="rate"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1.0×</option></select></label>
       <label><input id="assist" type="checkbox"> アシスト音</label>
+      <label>表示タイミング <input id="vis" type="range" min="-200" max="200" step="5" value="0"> <output id="vis-out">0ms</output></label>
+      <span id="latency"></span>
       <span class="time" id="time">0:00</span>
     </div>
     <p class="note" id="srcnote"></p>
+    <p class="note">ズレて見えるとき: アシスト音をオンにして、曲と音が合っていれば譜面は正しく、画面の遅れです。「表示タイミング」で合わせてください（+ にするとノーツが遅れて流れます）。</p>
   </div>
 </div>
 <audio id="audio" preload="auto"></audio>
@@ -122,22 +125,34 @@ $('diffname').textContent = typeof meta.difficulty === 'number' ? DIFF[meta.diff
 $('level').textContent = meta.level ?? '';
 $('srcnote').textContent = `${meta.chart_author ? '譜面: ' + meta.chart_author + ' · ' : ''}ノーツ ${notes.length} · 直角 ${chainEvents.length - notes.length}` + (hasAudio ? '' : ' · 音源なし（無音で再生）');
 
-// ---- clock: audio is the master; without audio a virtual clock runs
+// ---- clock. audio.currentTime is the master but updates in coarse steps, so a
+// performance.now() estimate runs between them and resyncs on drift. What is on
+// screen lags the sound by the output latency (large on Bluetooth) plus a manual offset.
 let playing = false, rate = 1, virtualStart = 0, virtualAt = 0, chartTime = -1;
-const now = () => {
+let anchorAt = 0, anchorTime = 0, outputLatency = 0, userOffset = 0;
+const audioNow = () => {   // chart time of the sample the audio element is producing
   if (!playing) return chartTime;
-  if (hasAudio) return audio.currentTime - offset;
-  return virtualStart + (performance.now() - virtualAt) / 1000 * rate;
+  if (!hasAudio) return virtualStart + (performance.now() - virtualAt) / 1000 * rate;
+  const raw = audio.currentTime - offset, est = anchorTime + (performance.now() - anchorAt) / 1000 * rate;
+  if (!anchorAt || audio.paused || Math.abs(raw - est) > 0.04) { anchorAt = performance.now(); anchorTime = raw; return raw; }
+  return est;
 };
+const now = () => playing ? audioNow() - outputLatency - userOffset / 1000 : chartTime;
+try { userOffset = +(localStorage.getItem('ksmauto-preview-offset') || 0); } catch (e) {}
+function measureLatency() {
+  try { ctx ||= new AudioContext(); ctx.resume(); outputLatency = (ctx.outputLatency || 0) + (ctx.baseLatency || 0); } catch (e) { outputLatency = 0; }
+  $('latency').textContent = `自動補正 ${Math.round(outputLatency * 1000)}ms`;
+}
 async function play() {
   if (playing) return;
-  playing = true; $('overlay').hidden = true; $('play').textContent = '❚❚ PAUSE';
+  playing = true; anchorAt = 0; scheduled = chartTime; $('overlay').hidden = true; $('play').textContent = '❚❚ PAUSE';
+  measureLatency();
   if (hasAudio) { audio.playbackRate = rate; audio.currentTime = Math.max(0, chartTime + offset); try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') { pause(); $('overlay').hidden = false; } } }
   else { virtualStart = chartTime; virtualAt = performance.now(); }
   ensureSound();
 }
-function pause() { chartTime = now(); playing = false; audio.pause(); $('play').textContent = '▶ PLAY'; }
-function seekTo(t) { const was = playing; if (was) pause(); chartTime = Math.max(-1, Math.min(lastSec, t)); lastTick = chartTime; if (hasAudio) audio.currentTime = Math.max(0, chartTime + offset); if (was) play(); }
+function pause() { chartTime = playing ? audioNow() : chartTime; playing = false; audio.pause(); $('play').textContent = '▶ PLAY'; }
+function seekTo(t) { const was = playing; if (was) pause(); chartTime = Math.max(-1, Math.min(lastSec, t)); lastTick = chartTime; scheduled = chartTime; if (hasAudio) audio.currentTime = Math.max(0, chartTime + offset); if (was) play(); }
 audio.addEventListener('ended', () => { pause(); chartTime = -1; $('overlay').hidden = false; });
 $('start').onclick = play;
 $('play').onclick = () => playing ? pause() : play();
@@ -157,11 +172,16 @@ for (const [p, text] of chart.editor?.comment || []) {
 }
 
 // ---- assist ticks
-let ctx = null, lastTick = -1;
+let ctx = null, lastTick = -1, scheduled = -1;
 function ensureSound() { if (!$('assist').checked) return; ctx ||= new AudioContext(); ctx.resume(); }
-$('assist').onchange = ensureSound;
-function tick(hi) {
-  if (!ctx) return; const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+$('assist').onchange = () => { ensureSound(); scheduled = audioNow(); };
+$('vis').value = userOffset; $('vis-out').textContent = `${userOffset > 0 ? '+' : ''}${userOffset}ms`;
+$('vis').oninput = e => {
+  userOffset = +e.target.value; $('vis-out').textContent = `${userOffset > 0 ? '+' : ''}${userOffset}ms`;
+  try { localStorage.setItem('ksmauto-preview-offset', String(userOffset)); } catch (err) {}
+};
+function tick(hi, delay = 0) {
+  if (!ctx) return; const t = ctx.currentTime + Math.max(0, delay), o = ctx.createOscillator(), g = ctx.createGain();
   o.frequency.value = hi ? 1760 : 1320; g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
   o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.05);
 }
@@ -240,7 +260,13 @@ function frame() {
 
   // hits, chain, ticks
   if (playing) {
-    for (const n of notes) if (n.t0 > lastTick && n.t0 <= t) { flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = 1; if (ctx && $('assist').checked) tick(n.kind === 'fx'); }
+    for (const n of notes) if (n.t0 > lastTick && n.t0 <= t) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = 1;
+    // Ticks follow the sound clock (they share its output latency), scheduled slightly ahead.
+    if (ctx && $('assist').checked) {
+      const a = audioNow(), until = a + 0.1 * rate;
+      for (const n of notes) if (n.t0 > scheduled && n.t0 <= until) tick(n.kind === 'fx', (n.t0 - a) / rate);
+      scheduled = until;
+    }
     for (const n of notes) if (n.long && n.t0 <= t && t <= n.t1) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = Math.max(flash[n.kind === 'bt' ? n.lane : 4 + n.lane], 0.6);
     lastTick = t;
   }
