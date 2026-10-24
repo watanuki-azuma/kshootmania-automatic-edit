@@ -271,8 +271,8 @@ def _image_chart(chart_dir, meta):
                     if end>start:
                         chart['note']['fx'][lane].append([start,end-start])
         green = (bar[:,:,0]==102)&(bar[:,:,1]==255)&(bar[:,:,2]==0)&(bar[:,:,3]>0)
-        # BPM text is immediately to the right of this column.
-        label = green[:, right+1:min(bar.shape[1],right+34)]
+        # BPM text sits just right of this column (older pages overlap its edge).
+        label = green[:, right-20:min(bar.shape[1],right+34)]
         for a,b in _runs(label.any(axis=1)):
             if b-a != 7:
                 continue
