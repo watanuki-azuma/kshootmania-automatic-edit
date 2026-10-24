@@ -48,10 +48,42 @@ warnings about unsupported data, including laser curves, before applying. The
 existing draft format's conversion behavior applies unchanged. Error messages
 include line and column numbers.
 
-This is a chart placement preview: it does not synthesize KSM audio effects or
-simulate camera/background animations or gameplay scroll modifiers. Audio time
-still follows the BPM map. Keep one editing tab per server session; saving from
-multiple tabs uses the last successful save.
+The editor canvas remains a placement view; its playback uses the BPM map.
+For the standalone chart viewer, run:
+
+```sh
+uv run ksmauto viewer -o viewer.html
+uv run ksmauto preview chart.ksh --audio song.ogg -o preview.html
+```
+
+Both commands use the same self-contained page. `viewer` starts with a file picker;
+`preview` embeds the chart and optional audio. Open KSON/KSH and audio in either
+order, together, or by dropping a folder. Audio is matched against
+`audio.bgm.filename`, with a fallback when there is only one audio file. Opening
+another chart replaces playback without reloading. KSH decoding supports UTF-8
+and Windows Shift_JIS. No server or external URLs are required, including in a
+sandboxed iframe with scripts enabled. Audio format support depends on the browser.
+
+The viewer supports KSON auto/manual tilt (including keep, immediate changes and
+quadratic curves), camera body graphs (`zoom_top`, `zoom_bottom`, `zoom_side`,
+`rotation_deg`, `center_split`), slam spin/half-spin/swing, and the default slam
+shake. Highway and judgment-line rotations are evaluated separately. KSH before
+version 167 uses the legacy zoom formulas. Camera smoothing is sampled at 120 Hz
+in chart time so pause, seeking and slowed playback show a repeatable camera pose;
+this approximates KSM's frame-driven smoothing. The procedural judgment line and
+cursor approximate the original textured planes and billboards.
+
+Both 2D and 3D use the same highway drawing and account for `beat.scroll_speed`
+(including curves and reverse scroll) and `beat.stop`. Stops freeze scroll for
+the specified pulse interval; audio and camera time continue. The seek bar is in
+measures. Play/pause, 0.5/0.75/1× playback, hi-speed and effects remain available.
+FX/laser audio effects and built-in FX key sounds use the existing approximate
+synthesis, independently of scroll. Backgrounds, layers, movies, original skin
+assets, judging, scoring and gameplay input are not reproduced. Custom sound files
+and `switch_audio` are not synthesized.
+
+Keep one editing tab per server session; saving from multiple tabs uses the last
+successful save.
 
 `uv run pytest tests/test_editor.py` includes HTTP integration tests, pure ES
 module tests through Node's test runner, and a Chromium smoke test using Node
@@ -59,3 +91,9 @@ Playwright. Missing Node/Playwright/Chromium or a sandbox that forbids loopback
 sockets skips the corresponding integration tests. HTTP handler tests also run
 in memory without sockets. A completed browser smoke test writes
 `out/editor-preview.png`.
+
+`uv run pytest tests/test_preview.py` also checks the standalone CLI, compares the
+browser KSH converter with the Python importer, runs Node camera/scroll tests,
+and exercises file loading and playback with Playwright. The local corpus is
+optional. Browser checks skip when Chromium is absent or the sandbox forbids
+launching it. A successful smoke test writes `out/viewer-preview.png`.
