@@ -9,6 +9,7 @@ LLM（Claude / GPT）で K-Shoot MANIA の譜面（KSON）を作るためのツ�
 ```sh
 uv sync --extra audio --extra render
 uv sync --extra audio --extra render --extra stems   # 音源分離も使う場合（PyTorch が入る。CPU 版で十分）
+uv sync --extra audio --extra render --extra stems --extra transcribe   # ピアノの採譜も使う場合
 uv run python scripts/fetch_corpus.py   # 公式既定曲を corpus/ に取得（任意。テスト・評価用）
 uv run pytest
 ```
@@ -20,7 +21,9 @@ uv run pytest
 | `ksmauto analyze SONG.ogg -o a.json --text a.txt` | BPM・offset・小節頭・帯域別オンセット・セクションを解析 |
 | `ksmauto analyze SONG.ogg --tempo 0:141,53:138.2 --offset 1074 ...` | テンポが変わる曲: テンポマップと offset を指定して解析し直す |
 | `ksmauto separate SONG.ogg -o stems/` | Demucs でボーカル・ドラム・ベース・その他に分離（`stems` extra。PyTorch CPU 版で 2 分の曲に約 1 分） |
-| `ksmauto analyze SONG.ogg --stems stems/ ...` | 分離音源から キック/スネア/ハイハット/ベース/ボーカル/その他 の段と、ボーカルの音程・その他（ピアノ等）の音の高さのレーン（`olane`）を追加 |
+| `ksmauto separate SONG.ogg -o stems/ --model htdemucs_6s` | 上に加えてピアノ・ギターも分ける（ピアノが主役の区間がある曲向け） |
+| `ksmauto transcribe stems/piano.wav` | ピアノのステムを ByteDance のピアノ採譜モデルで音符にする（`transcribe` extra。初回に約 170 MB のモデルを取得。2 分の曲に CPU で 1〜3 分）。`stems/piano.notes.json` に書き、`analyze --stems` が使う |
+| `ksmauto analyze SONG.ogg --stems stems/ ...` | 分離音源から キック/スネア/ハイハット/ベース/ボーカル/その他（あればピアノ）の段と、ボーカルの音程・その他とピアノの音の高さのレーン（`olane` `plane`）を追加 |
 | `ksmauto compile draft.ksmd -o chart.kson [--base orig.kson]` | DSL → KSON |
 | `ksmauto decompile chart.(kson\|ksh) -o draft.ksmd` | KSON/KSH → DSL |
 | `ksmauto convert chart.ksh -o chart.kson` | KSH → KSON |

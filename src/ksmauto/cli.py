@@ -104,6 +104,9 @@ def main(argv=None):
     if argv and argv[0] == "separate":
         from .separate import main as separate_main
         return separate_main(argv[1:])
+    if argv and argv[0] == "transcribe":
+        from .transcribe import main as transcribe_main
+        return transcribe_main(argv[1:])
     parser = argparse.ArgumentParser(prog="ksmauto")
     sub = parser.add_subparsers(dest="command", required=True)
     convert = sub.add_parser("convert", help="import a KSH chart as KSON")
@@ -120,7 +123,8 @@ def main(argv=None):
         if command == "compile":
             draft.add_argument("--base", type=Path)
     sub.add_parser("analyze", help="analyze audio (requires the audio extra)")
-    sub.add_parser("separate", help="split audio into vocal/drum/bass/other stems (requires demucs)")
+    sub.add_parser("separate", help="split audio into vocal/drum/bass/other (+piano/guitar) stems (requires demucs)")
+    sub.add_parser("transcribe", help="transcribe a piano stem into notes (requires piano_transcription_inference)")
     lint_p = sub.add_parser("lint", help="report playability problems")
     lint_p.add_argument("input", type=Path)
     lint_p.add_argument("--analysis", type=Path, help="analysis JSON from `ksmauto analyze`")

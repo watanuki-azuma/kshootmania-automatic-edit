@@ -16,6 +16,16 @@ uv run ksmauto separate SONG.ogg -o work/stems     # 音源分離（stems extra 
 uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text work/analysis.txt
 ```
 
+ピアノが主役の区間がある曲は 6 ステムに分けてピアノを採譜する（`plane` 列が増える。`other` から拾うより音程・発音ともずっと正確）:
+
+```sh
+uv run ksmauto separate SONG.ogg -o work/stems --model htdemucs_6s
+uv run ksmauto transcribe work/stems/piano.wav      # transcribe extra が必要。work/stems/piano.notes.json を書く
+uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text work/analysis.txt
+```
+
+`transcribe` が「not installed」で止まるときは飛ばしてよい（`plane` は音から取った精度の低いものになる）。
+
 demucs が入っていない（`separate` が「demucs is not installed」で止まる）ときは分離を飛ばし、`--stems` なしで解析する:
 
 ```sh
@@ -33,6 +43,7 @@ uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
 - `bass` `vocal` `other`: 発音位置（`X`/`x`）と、音が伸びている間の `=`。`other` はシンセ・ギター・ピアノなど。
 - `vpitch`: ボーカルの音程を曲の音域の中で 0（低い）〜9（高い）にしたもの。レーザーの位置の目安（低い = 左）。
 - `olane`: `other`（ピアノ・シンセなど）の発音を、音の高さで A〜D に割り当てたもの。ピアノやアルペジオが主役の区間は、これを BT の階段の下書きにする（`references/charting-guide.md` の「楽器別の型」）。
+- `piano` `plane`: 6 ステム分離のときだけ。ピアノの発音と、その高さの A〜D。ピアノの区間は `olane` より `plane` を使う。
 
 確認すること:
 - BPM の信頼度（conf）が低い、候補が割れている → 候補の倍・半分を疑う。曲のノリ（体感テンポ）が 120〜240 に入る方を取る。

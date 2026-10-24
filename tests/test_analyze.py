@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pytest
 
@@ -117,7 +119,7 @@ def test_stem_cells_short_stem_and_triplet_rows():
     frames = 10
     tracks = {"peaks": {k: (np.array([]), np.array([])) for k in STEM_ROWS},
               "active": {"bass": np.ones(frames, dtype=bool)}, "pitch": np.full(frames, 69.0),
-              "other_pitch": (np.array([]), np.array([]))}
+              "lane_pitch": {"other": (np.array([]), np.array([]))}}
     m = _measure_stems(tracks, 0.0, 2.0, 4)
     assert m["sustain"]["bass"] == [] and m["vocal_pitch"] == []
 
@@ -133,3 +135,32 @@ def test_top_note_does_not_wrap_around_the_range():
     rise = np.zeros((72, 12))
     rise[0], rise[71] = 1.0, 0.9
     assert _top_note(rise, 0) == 71
+
+
+def test_piano_stem_uses_transcribed_notes(tmp_path):
+    """With piano.wav and piano.notes.json, the piano row takes onsets and top notes from the notes."""
+    sr, bpm, seconds = 22050, 120.0, 12.0
+    n = int(seconds * sr)
+    rng = np.random.default_rng(3)
+    t = np.arange(n) / sr
+    kick = np.zeros(n)
+    for i in range(int(seconds * 2)):
+        s = int(i * 0.5 * sr)
+        kick[s:s + 2000] += np.sin(2 * np.pi * 60 * t[:2000]) * np.exp(-t[:2000] * 30)
+    stems = tmp_path / "stems"
+    stems.mkdir()
+    quiet = rng.standard_normal(n) * 1e-4
+    piano = np.sin(2 * np.pi * 440 * t) * 0.3
+    for name, y in {"drums": kick, "vocals": quiet, "bass": quiet, "other": quiet, "piano": piano}.items():
+        sf.write(stems / f"{name}.wav", y, sr)
+    sf.write(tmp_path / "mix.wav", kick * 0.5 + piano * 0.5, sr)
+    # measure 2 starts at 4 s: a C-major chord (top G4) on beat 0, then E5 and C5 on 8ths
+    notes = [[4.0, 4.4, 60, 0.8], [4.01, 4.4, 67, 0.7], [4.25, 4.5, 76, 0.6], [4.5, 4.9, 72, 0.9]]
+    (stems / "piano.notes.json").write_text(json.dumps(notes))
+
+    a = analyze(tmp_path / "mix.wav", tempo=[[0, bpm]], offset_ms=0, stems=stems)
+    st = a["measures"][2]["stems"]
+    assert [b for b, _ in st["onsets"]["piano"]] == [0, 0.5, 1]
+    assert [p for _, p in st["piano_pitch"]] == [67, 76, 72]
+    header = to_text(a).splitlines()[4]
+    assert header.split()[-2:] == ["olane", "plane"]
