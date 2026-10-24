@@ -10,13 +10,28 @@ from pathlib import Path
 
 import librosa
 import numpy as np
-from scipy.ndimage import uniform_filter1d
+from scipy.ndimage import maximum_filter1d, uniform_filter1d
 from scipy.signal import find_peaks
 
 SR = 22050
 HOP = 128  # ~5.8 ms per frame
 N_FFT = 1024  # short window keeps onset timing tight
 BANDS = {"low": (20.0, 180.0), "mid": (180.0, 3000.0), "high": (5000.0, 11000.0)}
+# Stem rows for `--stems` (see ksmauto.separate): row -> (stem file, band in Hz).
+# The drum rows come from an NMF split of the drum stem (DRUM_TEMPLATES), not a band.
+STEM_ROWS = {"kick": ("drums", None, None), "snare": ("drums", None, None), "hat": ("drums", None, None),
+             "bass": ("bass", 20.0, 2000.0), "vocal": ("vocals", 80.0, 8000.0), "other": ("other", 20.0, 11000.0)}
+# Initial spectra (centre Hz, width in octaves) and the Hz range each may learn. Kick
+# energy above a few hundred Hz otherwise ends up in the snare, so the snare and hi-hat
+# templates are kept out of the kick's body and the kick takes its own click.
+DRUM_TEMPLATES = {"kick": (70.0, 0.6, 0.0, 5000.0), "snare": (1200.0, 1.4, 500.0, 5000.0),
+                  "hat": (9000.0, 0.5, 5000.0, SR / 2)}
+# Rows that also report where the stem keeps sounding, as [start beat, length] spans.
+SUSTAIN_ROWS = {"bass": "bass", "vocal": "vocals", "other": "other"}
+# A stem counts as sounding within ACTIVE_DB of its own loud level (95th percentile),
+# and never below FLOOR_DB under the loudest stem (a near-silent stem is all bleed).
+ACTIVE_DB = 20.0
+FLOOR_DB = 40.0
 BPM_RANGE = (60.0, 300.0)
 # Prior for octave resolution: rhythm games mostly sit in this range.
 BPM_PREFERRED = (120.0, 240.0)
@@ -187,9 +202,11 @@ def _sections(feat: np.ndarray, n_measures: int) -> list[dict]:
 
 
 def analyze(path: str | Path, beats_per_measure: int = 4, tempo: list[list[float]] | None = None,
-            offset_ms: int | None = None) -> dict:
+            offset_ms: int | None = None, stems: str | Path | None = None) -> dict:
     """`tempo` ([[measure, bpm], ...]) and `offset_ms` override the estimates, for
-    songs whose tempo changes (the estimator assumes one constant tempo)."""
+    songs whose tempo changes (the estimator assumes one constant tempo).
+    `stems` is a directory from `ksmauto separate`; tempo and offset still come
+    from the mix, and each measure gains per-instrument rows."""
     path = Path(path)
     y, sr = librosa.load(path, sr=SR, mono=True)
     duration = len(y) / sr
@@ -234,37 +251,26 @@ def analyze(path: str | Path, beats_per_measure: int = 4, tempo: list[list[float
 
     rms = librosa.feature.rms(y=y, hop_length=HOP)[0]
 
-    peaks = {}
-    for name, e in list(bands.items()) + [("all", env_all)]:
-        idx, props = find_peaks(e, height=0.12, distance=max(1, int(period / 4 * 0.6)))
-        peaks[name] = (idx / fps, np.clip(props["peak_heights"], 0, 1))
+    peaks = {name: _peaks(e, fps, period) for name, e in list(bands.items()) + [("all", env_all)]}
+    tracks = _stem_tracks(Path(stems), period) if stems else None
 
     measures = []
     feats = []
     for m in range(n_measures):
         t0 = starts[m]
         measure_sec = starts[m + 1] - t0
-        beat_sec = measure_sec / beats_per_measure
         f0, f1 = int(t0 * fps), int((t0 + measure_sec) * fps)
         seg = slice(max(0, f0), max(f0 + 1, min(f1, len(rms))))
-        onsets = {}
-        for name, (times, heights) in peaks.items():
-            sel = (times >= t0 - beat_sec * 0.1) & (times < t0 + measure_sec - beat_sec * 0.1)
-            beats = (times[sel] - t0) / beat_sec
-            q = _quantize(beats)
-            best: dict[float, float] = {}
-            for qb, h in zip(q, heights[sel]):
-                if qb is None or qb < 0 or qb >= beats_per_measure:
-                    continue
-                key = round(qb, 4)
-                best[key] = max(best.get(key, 0.0), float(h))
-            onsets[name] = [[_fmt_beat(b), round(h, 2)] for b, h in sorted(best.items())]
+        onsets = {name: _measure_onsets(times, heights, t0, measure_sec, beats_per_measure)
+                  for name, (times, heights) in peaks.items()}
         measures.append({
             "index": m,
             "start_sec": round(t0, 4),
             "energy": float(rms[seg].mean()) if f0 < len(rms) else 0.0,
             "onsets": onsets,
         })
+        if tracks:
+            measures[-1]["stems"] = _measure_stems(tracks, t0, measure_sec, beats_per_measure)
         feats.append(np.concatenate([chroma[:, seg].mean(axis=1), mfcc[:, seg].mean(axis=1)]))
 
     emax = max((m["energy"] for m in measures), default=1.0) or 1.0
@@ -290,6 +296,116 @@ def analyze(path: str | Path, beats_per_measure: int = 4, tempo: list[list[float
     }
 
 
+def _peaks(e: np.ndarray, fps: float, period: float) -> tuple[np.ndarray, np.ndarray]:
+    idx, props = find_peaks(e, height=0.12, distance=max(1, int(period / 4 * 0.6)))
+    return idx / fps, np.clip(props["peak_heights"], 0, 1)
+
+
+def _measure_onsets(times, heights, t0: float, measure_sec: float, beats_per_measure: int) -> list:
+    beat_sec = measure_sec / beats_per_measure
+    sel = (times >= t0 - beat_sec * 0.1) & (times < t0 + measure_sec - beat_sec * 0.1)
+    best: dict[float, float] = {}
+    for qb, h in zip(_quantize((times[sel] - t0) / beat_sec), heights[sel]):
+        if qb is None or qb < 0 or qb >= beats_per_measure:
+            continue
+        key = round(qb, 4)
+        best[key] = max(best.get(key, 0.0), float(h))
+    return [[_fmt_beat(b), round(h, 2)] for b, h in sorted(best.items())]
+
+
+def _drum_flux(y: np.ndarray) -> dict[str, np.ndarray]:
+    """Onset envelopes for kick / snare / hi-hat from NMF with masked, adaptive templates."""
+    M = librosa.feature.melspectrogram(y=y, sr=SR, n_fft=N_FFT, hop_length=HOP, n_mels=64,
+                                       fmax=SR / 2, power=1.0)
+    mf = librosa.mel_frequencies(n_mels=64, fmax=SR / 2)
+    logf = np.log2(mf + 1)
+    W = np.stack([np.exp(-0.5 * ((logf - np.log2(hz)) / width) ** 2) for hz, width, _, _ in DRUM_TEMPLATES.values()],
+                 axis=1) + 1e-3
+    mask = np.stack([((mf >= low) & (mf <= high)).astype(float) for _, _, low, high in DRUM_TEMPLATES.values()],
+                    axis=1)
+    W = W * mask / (W * mask).sum(axis=0)
+    H = np.full((W.shape[1], M.shape[1]), M.mean())
+    eps = 1e-9
+    for it in range(80):  # KL multiplicative updates; templates adapt after a warm-up
+        H *= (W.T @ (M / (W @ H + eps))) / (W.sum(axis=0)[:, None] + eps)
+        if it >= 10:
+            W *= ((M / (W @ H + eps)) @ H.T) / (H.sum(axis=1)[None, :] + eps) * mask
+            W /= W.sum(axis=0)
+    logh = np.log1p(50.0 * H / (H.max() + eps))
+    flux = np.maximum(0.0, np.diff(logh, axis=1, prepend=logh[:, :1]))
+    flux = np.maximum(flux - uniform_filter1d(flux, 64, axis=1), 0.0)
+    # A sharp attack splashes into every template; keep a row's onset only if no other
+    # drum starts at least twice as strongly at the same moment.
+    # Compare linear attacks, each scaled by the row's own strong attacks: the log scale
+    # inflates faint leakage, and raw units would let the kick hide a snare on the beat.
+    rise = np.maximum(0.0, np.diff(H, axis=1, prepend=H[:, :1]))
+    rise /= np.percentile(rise, 99.5, axis=1, keepdims=True) + eps
+    local = maximum_filter1d(rise, 5, axis=1)
+    out = {}
+    for k, name in enumerate(DRUM_TEMPLATES):
+        row = np.where(local[k] * 2 >= np.delete(local, k, axis=0).max(axis=0), flux[k], 0.0)
+        peak = np.percentile(row, 99.5)
+        out[name] = row / peak if peak > 0 else row
+    return out
+
+
+def _stem_tracks(stems_dir: Path, period: float) -> dict:
+    """Onset peaks per stem row, sounding frames per sustained stem, and vocal pitch."""
+    fps = SR / HOP
+    loaded, levels = {}, {}
+    for stem in {stem for stem, _, _ in STEM_ROWS.values()}:
+        y, _ = librosa.load(stems_dir / f"{stem}.wav", sr=SR, mono=True)
+        levels[stem] = librosa.amplitude_to_db(librosa.feature.rms(y=y, hop_length=HOP)[0], ref=1.0)
+        loaded[stem] = (y, np.abs(librosa.stft(y, n_fft=N_FFT, hop_length=HOP)))
+    floor = max(np.percentile(db, 95) for db in levels.values()) - FLOOR_DB
+    for stem, db in levels.items():
+        loaded[stem] += (db > max(np.percentile(db, 95) - ACTIVE_DB, floor),)
+    freqs = librosa.fft_frequencies(sr=SR, n_fft=N_FFT)
+    active = {row: loaded[stem][2] for row, stem in SUSTAIN_ROWS.items()}
+    # Voicing decides where the vocal sounds; the level gate drops bleed from other stems.
+    f0, voiced, _ = librosa.pyin(loaded["vocals"][0], fmin=80.0, fmax=1000.0, sr=SR,
+                                 frame_length=1024, hop_length=HOP)
+    n = min(len(voiced), len(active["vocal"]))
+    active["vocal"] = active["vocal"][:n] & voiced[:n]
+    pitch = np.where(active["vocal"], librosa.hz_to_midi(f0[:n]), np.nan)
+    drums = _drum_flux(loaded["drums"][0])
+    peaks = {}
+    for row, (stem, lo, hi) in STEM_ROWS.items():
+        env = drums[row] if row in drums else _band_flux(loaded[stem][1], freqs, lo, hi)
+        times, heights = _peaks(env, fps, period)
+        if row in active:  # drop onsets where the stem itself is quiet
+            frames = np.minimum((times * fps).astype(int), len(active[row]) - 1)
+            keep = active[row][frames]
+            times, heights = times[keep], heights[keep]
+        peaks[row] = (times, heights)
+    return {"peaks": peaks, "active": active, "pitch": pitch}
+
+
+def _measure_stems(tracks: dict, t0: float, measure_sec: float, beats_per_measure: int) -> dict:
+    fps = SR / HOP
+    cells = beats_per_measure * 4
+    cell_sec = measure_sec / cells
+    out = {"onsets": {row: _measure_onsets(*tracks["peaks"][row], t0, measure_sec, beats_per_measure)
+                      for row in STEM_ROWS},
+           "sustain": {}, "vocal_pitch": []}
+    bounds = [(int((t0 + k * cell_sec) * fps), int((t0 + (k + 1) * cell_sec) * fps)) for k in range(cells)]
+    for row, frames in tracks["active"].items():
+        spans = []
+        for k, (a, b) in enumerate(bounds):
+            seg = frames[max(0, a):max(0, b)]
+            if len(seg) and seg.mean() >= 0.5:
+                if spans and spans[-1][0] + spans[-1][1] == k:
+                    spans[-1][1] += 1
+                else:
+                    spans.append([k, 1])
+        out["sustain"][row] = [[_fmt_beat(k / 4), _fmt_beat(n / 4)] for k, n in spans]
+    for k, (a, b) in enumerate(bounds):
+        seg = tracks["pitch"][max(0, a):max(0, b)]
+        if len(seg) and np.isfinite(seg).mean() >= 0.5:
+            out["vocal_pitch"].append([_fmt_beat(k / 4), round(float(np.nanmedian(seg)), 1)])
+    return out
+
+
 def _fmt_beat(b: float) -> float:
     return round(b, 4)
 
@@ -305,23 +421,55 @@ def _grid_row(onsets: list, beats: int, div: int) -> str:
     return "".join(cells)
 
 
+def _span_row(row: str, spans: list, beats: int, div: int) -> str:
+    """Overlay sustain spans ('=') under the onset marks of a stem row."""
+    cells = list(row)
+    for start, length in spans:
+        for i in range(len(cells)):
+            if start <= (i + 0.5) / div < start + length and cells[i] == ".":
+                cells[i] = "="
+    return "".join(cells)
+
+
+def _pitch_row(pitch: list, beats: int, div: int, lo: float, hi: float) -> str:
+    """Vocal pitch as 0-9 within the song's vocal range (a laser-position hint)."""
+    at = {round(b * 4): m for b, m in pitch}
+    cells = []
+    for i in range(beats * div):
+        m = at.get(round(i / div * 4))
+        cells.append("." if m is None else str(int(np.clip(round((m - lo) / max(hi - lo, 1e-6) * 9), 0, 9))))
+    return "".join(cells)
+
+
 def to_text(a: dict) -> str:
     t = a["tempo"]
     beats = t["time_sig"][0]
     ms = a["measures"]
+    stems = bool(ms) and "stems" in ms[0]
+    names = list(STEM_ROWS) + ["vpitch"] if stems else ["low", "mid", "high"]
     lines = [
         f"BPM {t['bpm']:g} (conf {t['confidence']:.2f})"
         + "".join(f" -> m{m}:{v:g}" for m, v in t.get("changes", []))
         + f"  offset {a['offset_ms']}ms  "
         f"{t['time_sig'][0]}/{t['time_sig'][1]}  duration {a['audio']['duration_sec']:.1f}s  measures 0-{len(ms) - 1}",
         "sections: " + " | ".join(f"{s['label']} m{s['start']}-{s['end'] - 1} ({s['energy']:.2f})" for s in a["sections"]),
-        "",
-        f"{'m':<4}{'energy':<8}{'low':<{beats * 4 + 1}}{'mid':<{beats * 4 + 1}}{'high':<{beats * 4 + 1}}",
     ]
+    if stems:
+        values = [p for m in ms for _, p in m["stems"]["vocal_pitch"]]
+        lo, hi = (np.percentile(values, [5, 95]) if values else (60.0, 72.0))
+        lines.append(f"stems: '=' = still sounding; vpitch 0-9 = vocal pitch over "
+                     f"{librosa.midi_to_note(lo)}-{librosa.midi_to_note(hi)} (low = left)")
+    lines += ["", f"{'m':<4}{'energy':<8}" + "".join(f"{n:<{beats * 4 + 1}}" for n in names)]
     for m in ms:
         triplet = sum(1 for b, _ in m["onsets"]["all"] if abs(b * 3 - round(b * 3)) < 1e-3 and abs(b * 4 - round(b * 4)) > 1e-3)
         div = 3 if triplet >= 3 else 4
-        rows = [_grid_row(m["onsets"][k], beats, div) for k in ("low", "mid", "high")]
+        if stems:
+            st = m["stems"]
+            rows = [_grid_row(st["onsets"][k], beats, div) for k in STEM_ROWS]
+            rows = [_span_row(r, st["sustain"].get(k, []), beats, div) for r, k in zip(rows, STEM_ROWS)]
+            rows.append(_pitch_row(st["vocal_pitch"], beats, div, lo, hi))
+        else:
+            rows = [_grid_row(m["onsets"][k], beats, div) for k in ("low", "mid", "high")]
         if div == 3:
             rows = ["|".join(r[i:i + 3] for i in range(0, len(r), 3)) for r in rows]
         lines.append(f"{m['index']:<4}{m['energy']:<8.2f}" + " ".join(rows))
@@ -338,9 +486,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--beats", type=int, default=4, help="beats per measure (default 4)")
     p.add_argument("--tempo", help="fixed tempo map 'MEASURE:BPM,...', e.g. 0:141,53:138.4,63:141")
     p.add_argument("--offset", type=int, help="fixed offset in ms (measure 0 start)")
+    p.add_argument("--stems", help="stem directory from `ksmauto separate` (adds per-instrument rows)")
     args = p.parse_args(argv)
     tempo = [[int(m), float(b)] for m, b in (x.split(":") for x in args.tempo.split(","))] if args.tempo else None
-    a = analyze(args.audio, beats_per_measure=args.beats, tempo=tempo, offset_ms=args.offset)
+    a = analyze(args.audio, beats_per_measure=args.beats, tempo=tempo, offset_ms=args.offset, stems=args.stems)
     js = json.dumps(a, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(js + "\n", encoding="utf-8")

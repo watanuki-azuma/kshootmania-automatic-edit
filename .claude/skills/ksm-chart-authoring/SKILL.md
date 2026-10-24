@@ -12,7 +12,8 @@ description: K-Shoot MANIA の譜面（KSON）を音源から作る・既存譜�
 ### 1. 音源を解析する
 
 ```sh
-uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
+uv run ksmauto separate SONG.ogg -o work/stems     # 音源分離（demucs が入っていれば。無ければ飛ばす）
+uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text work/analysis.txt
 ```
 
 `analysis.txt` を読む。先頭に BPM・offset・セクション、以下に小節ごとの 16 分グリッド（`X` 強、`x` 弱。3連の小節は 12 分割で `|` 区切り）。
@@ -20,6 +21,11 @@ uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
 - `low`: ベース・キックの低域。EDM では**裏打ちベース**（16 分の 3・7・11・15 番目）が出ることが多い。
 - `mid`: キックのアタック・スネア・ボーカル。表拍の `X` はここに出る。BT の主な根拠にする。
 - `high`: ハイハット・刻み。
+
+`--stems` を付けた場合は帯域の 3 段の代わりに楽器ごとの 7 段になる。**何に合わせて何を置くか**はこちらで決める（対応表は `references/charting-guide.md` の「音と配置の対応」）。
+- `kick` `snare` `hat`: ドラムを分けたもの。キックと同時に鳴るスネアは見分けが甘い（毎拍 `X` が並んだらキック＋クラップの重ねか漏れ）。
+- `bass` `vocal` `other`: 発音位置（`X`/`x`）と、音が伸びている間の `=`。`other` はシンセ・ギター・ピアノなど。
+- `vpitch`: ボーカルの音程を曲の音域の中で 0（低い）〜9（高い）にしたもの。レーザーの位置の目安（低い = 左）。
 
 確認すること:
 - BPM の信頼度（conf）が低い、候補が割れている → 候補の倍・半分を疑う。曲のノリ（体感テンポ）が 120〜240 に入る方を取る。
