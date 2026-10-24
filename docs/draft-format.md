@@ -21,7 +21,7 @@ LLM が譜面を書く・読むための行指向テキスト形式。拡張子 
 - **拍は小節内の 0 始まりの拍位置**。拍の長さは拍子の分母で決まる（4/4 なら四分音符、6/8 なら八分音符）。
 - 拍の書き方: 整数 `2`、小数 `1.5`、分数 `3/4`、帯分数 `2+1/3`（三連符などに使う）。
 - 絶対位置: `m12:2.5`（12小節目の 2.5 拍）。
-- 1拍 = `240 * 4 / 分母` pulse。位置は整数 pulse に丸める。丸め誤差が 1 pulse を超える書き方（例: 1/7 拍）はエラー。
+- 1拍 = `240 * 4 / 分母` pulse。位置は最も近い整数 pulse に丸める（4/4 なら 1/240 拍単位。1/7 拍なども近似して受理する）。
 
 ## ヘッダ（最初の `@m` より前）
 
@@ -51,6 +51,8 @@ disp_bpm: 191          # 省略時は BPM 変化から自動計算
 @m12                 # 以降の行は 12 小節目
 @m12 "chorus 1"      # ラベルつき（KSON editor.comment に入る）
 ```
+
+ラベルは1小節に1つ。decompile は同じ小節に複数のコメントがあると先頭だけを出力して警告する（`--base` で compile すれば元のコメントは保持される）。
 
 ### テンポ・拍子
 
@@ -122,4 +124,16 @@ level: 10
 2 B D
 @m3
 copy m1-2 -> m3 mirror
+```
+
+## 関連コマンド
+
+`.ksmd` は `lint` / `stats` / `render` にもそのまま渡せる（内部で compile する）。
+
+```sh
+ksmauto compile draft.ksmd -o chart.kson [--base original.kson]
+ksmauto decompile chart.kson -o draft.ksmd
+ksmauto lint draft.ksmd --analysis analysis.json
+ksmauto stats draft.ksmd
+ksmauto render draft.ksmd --measures 16-47 -o page.png
 ```
