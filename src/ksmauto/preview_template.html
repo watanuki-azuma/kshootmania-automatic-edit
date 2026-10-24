@@ -73,6 +73,7 @@ input[type=range] { accent-color: var(--accent); }
       <label>HI-SPEED <input id="hispeed" type="range" min="3" max="12" step="0.5" value="6.5"></label>
       <label>速度 <select id="rate"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1.0×</option></select></label>
       <label><input id="assist" type="checkbox"> アシスト音</label>
+      <label title="FX ロング・レーザーのエフェクトと FX のキー音（全部押した場合の近似）"><input id="effects" type="checkbox"> エフェクト</label>
       <label>表示タイミング <input id="vis" type="range" min="-200" max="200" step="5" value="0"> <output id="vis-out">0ms</output></label>
       <span id="latency"></span>
       <span class="time" id="time">0:00</span>
@@ -83,6 +84,218 @@ input[type=range] { accent-color: var(--accent); }
 </div>
 <audio id="audio" preload="auto"></audio>
 
+<script id="fx-worklet" type="text/plain">
+// Audio effects of FX longs and lasers, written from the KSON spec (docs/spec/kson_format.md).
+// Loaded as an AudioWorklet module; the page sends the effect timeline once and its clock every frame.
+// Lengths arrive as measures (>= 0) or as negative seconds.
+const TAU = 2 * Math.PI;
+class Biquad {
+  constructor() { this.c = [1, 0, 0, 0, 0]; this.z = [0, 0, 0, 0]; }
+  set(type, f, q, db = 0) {
+    const w = TAU * Math.min(Math.max(f, 10), sampleRate * 0.45) / sampleRate, cs = Math.cos(w), al = Math.sin(w) / (2 * q), A = Math.pow(10, db / 40);
+    let b0, b1, b2, a0, a2;
+    if (type === 'lp') { b0 = b2 = (1 - cs) / 2; b1 = 1 - cs; a0 = 1 + al; a2 = 1 - al; }
+    else if (type === 'hp') { b0 = b2 = (1 + cs) / 2; b1 = -(1 + cs); a0 = 1 + al; a2 = 1 - al; }
+    else { b0 = 1 + al * A; b1 = -2 * cs; b2 = 1 - al * A; a0 = 1 + al / A; a2 = 1 - al / A; }
+    this.c = [b0 / a0, b1 / a0, b2 / a0, -2 * cs / a0, a2 / a0];
+  }
+  run(x, ch) { const c = this.c, z = this.z, k = ch * 2, y = c[0] * x + z[k]; z[k] = c[1] * x - c[3] * y + z[k + 1]; z[k + 1] = c[2] * x - c[4] * y; return y; }
+}
+// Each effect reads its parameters once per block (OnMin..OnMax by the laser value v; FX longs use v = 0)
+// and then turns one stereo sample into this.l / this.r.
+class Fx {
+  constructor(seg) { this.p = seg.p; this.l = this.r = 0; }
+  get(k, v) { const q = this.p[k]; return q ? q.min + (q.max - q.min) * v : 0; }
+  wet(l, r, wl, wr, mix) { this.l = l + (wl - l) * mix; this.r = r + (wr - r) * mix; }
+}
+class Gate extends Fx {
+  g = 1;
+  block(e) { this.wl = e.len(this.get('wave_length', e.v)); this.rate = this.get('rate', e.v); this.mix = this.get('mix', e.v); this.ms = e.ms; }
+  step(l, r, t) {
+    const on = !(this.wl > 0) || (t - this.ms) % this.wl < this.rate * this.wl;
+    this.g += ((on ? 1 : 0) - this.g) * 0.05;
+    const k = 1 - this.mix + this.mix * this.g; this.l = l * k; this.r = r * k;
+  }
+}
+// retrigger and echo: record from the trigger point and loop the first wave_length of it.
+class Repeat extends Fx {
+  buf = [new Float32Array(sampleRate * 4), new Float32Array(sampleRate * 4)]; key = null; n = 0;
+  block(e) {
+    this.wl = e.len(this.get('wave_length', e.v)); this.upd = e.len(this.get('update_period', e.v)); this.mix = this.get('mix', e.v);
+    this.echo = 'feedback_level' in this.p; this.rate = this.echo ? 1 : this.get('rate', e.v); this.fb = this.get('feedback_level', e.v);
+    this.ms = e.ms; this.spc = e.spc;
+  }
+  step(l, r, t) {
+    if (!(this.wl > 0)) { this.l = l; this.r = r; return; }
+    const key = this.upd > 0 ? this.ms + Math.floor((t - this.ms) / this.upd + 1e-9) * this.upd : 0;
+    if (key !== this.key) { this.key = key; this.t0 = t; this.n = 0; }
+    const cap = Math.min(this.buf[0].length, Math.max(1, Math.round(this.wl * this.spc)));
+    if (this.n < cap) { this.buf[0][this.n] = l; this.buf[1][this.n] = r; this.n++; }
+    const el = t - this.t0, ph = el % this.wl, pos = Math.min(Math.floor(ph * this.spc), this.n - 1);
+    const k = this.echo ? Math.pow(this.fb, Math.floor(el / this.wl)) : ph < this.rate * this.wl ? 1 : 0;
+    this.wet(l, r, this.buf[0][pos] * k, this.buf[1][pos] * k, this.mix);
+  }
+}
+class Bitcrusher extends Fx {
+  c = 0; hl = 0; hr = 0;
+  block(e) { this.n = this.get('reduction', e.v) * sampleRate / 44100; this.mix = this.get('mix', e.v); }
+  step(l, r) { if (++this.c >= this.n) { this.c = 0; this.hl = l; this.hr = r; } this.wet(l, r, this.hl, this.hr, this.mix); }
+}
+class Flanger extends Fx {
+  d = [new Float32Array(8192), new Float32Array(8192)]; w = 0;
+  block(e) {
+    this.per = e.len(this.get('period', e.v)); this.dl = this.get('delay', e.v) * sampleRate / 44100; this.dp = this.get('depth', e.v) * sampleRate / 44100;
+    this.fb = this.get('feedback', e.v); this.sw = this.get('stereo_width', e.v); this.vol = 'vol' in this.p ? this.get('vol', e.v) : 0.75; this.mix = this.get('mix', e.v);
+  }
+  tap(ch, x, t, off) {
+    const lfo = this.per > 0 ? 0.5 - 0.5 * Math.cos(TAU * (t / this.per + off)) : 0.5, buf = this.d[ch];
+    const p = this.w - this.dl - this.dp * lfo, i = Math.floor(p), f = p - i, y = buf[i & 8191] * (1 - f) + buf[(i + 1) & 8191] * f;
+    buf[this.w & 8191] = x + y * this.fb;
+    return (x + y * this.vol) / (1 + this.vol);
+  }
+  step(l, r, t) { const wl = this.tap(0, l, t, 0), wr = this.tap(1, r, t, this.sw / 2); this.w++; this.wet(l, r, wl, wr, this.mix); }
+}
+class Phaser extends Fx {
+  z = new Float32Array(24); last = [0, 0]; a = [0, 0];
+  block(e) {
+    const per = e.len(this.get('period', e.v)), f1 = this.get('freq_1', e.v), f2 = this.get('freq_2', e.v), sw = this.get('stereo_width', e.v);
+    this.n = Math.min(12, Math.round(this.get('stage', e.v))); this.fb = this.get('feedback', e.v); this.mix = Math.min(1, 2 * this.get('mix', e.v));
+    for (let ch = 0; ch < 2; ch++) {
+      const lfo = per > 0 ? 0.5 - 0.5 * Math.cos(TAU * (e.t / per + ch * sw / 2)) : 0.5;
+      const tn = Math.tan(Math.PI * Math.min(f1 * Math.pow(f2 / f1, lfo), sampleRate * 0.45) / sampleRate);
+      this.a[ch] = (tn - 1) / (tn + 1);
+    }
+  }
+  ap(ch, x) {
+    let y = x + this.last[ch] * this.fb; const a = this.a[ch];
+    for (let s = 0; s < this.n; s++) { const k = ch * 12 + s, o = a * y + this.z[k]; this.z[k] = y - a * o; y = o; }
+    return this.last[ch] = y;
+  }
+  step(l, r) { const al = this.ap(0, l), ar = this.ap(1, r); this.l = l * (1 - this.mix / 2) + al * this.mix / 2; this.r = r * (1 - this.mix / 2) + ar * this.mix / 2; }
+}
+class Wobble extends Fx {
+  f = new Biquad();
+  block(e) {
+    const wl = e.len(this.get('wave_length', e.v)); this.mix = wl > 0 ? this.get('mix', e.v) : 0;
+    if (!(wl > 0)) return;
+    const lfo = 0.5 - 0.5 * Math.cos(TAU * ((e.t - e.ms) % wl) / wl), f1 = this.get('freq_1', e.v), f2 = this.get('freq_2', e.v);
+    this.f.set('lp', f1 * Math.pow(f2 / f1, lfo), this.get('q', e.v));
+  }
+  step(l, r) { this.wet(l, r, this.f.run(l, 0), this.f.run(r, 1), this.mix); }
+}
+// Slows the recorded audio from the note start down to a stop.
+class Tapestop extends Fx {
+  buf = [new Float32Array(sampleRate * 8), new Float32Array(sampleRate * 8)]; w = 0; rp = 0; sp = 1;
+  block(e) { this.mix = this.get('trigger', e.v) > 0.5 ? this.get('mix', e.v) : 0; this.fall = Math.max(0.05, this.get('speed', e.v)) / (0.3 * sampleRate); }
+  step(l, r) {
+    if (this.w < this.buf[0].length) { this.buf[0][this.w] = l; this.buf[1][this.w] = r; this.w++; }
+    this.sp = Math.max(0, this.sp - this.fall); this.rp = Math.min(this.rp + this.sp, this.w - 1);
+    const i = Math.floor(this.rp), f = this.rp - i, j = Math.min(i + 1, this.w - 1), g = Math.min(1, this.sp * 4);
+    this.wet(l, r, (this.buf[0][i] * (1 - f) + this.buf[0][j] * f) * g, (this.buf[1][i] * (1 - f) + this.buf[1][j] * f) * g, this.mix);
+  }
+}
+class Sidechain extends Fx {
+  block(e) {
+    this.per = e.len(this.get('period', e.v)); this.a = e.len(this.get('attack_time', e.v)); this.h = e.len(this.get('hold_time', e.v));
+    this.rl = e.len(this.get('release_time', e.v)); this.lo = 1 / Math.max(1, this.get('ratio', e.v)); this.ms = e.ms;
+  }
+  step(l, r, t) {
+    let g = 1;
+    if (this.per > 0) {
+      const ph = (t - this.ms) % this.per, lo = this.lo;
+      if (ph < this.a) g = 1 + (lo - 1) * ph / this.a;
+      else if (ph < this.a + this.h) g = lo;
+      else if (ph < this.a + this.h + this.rl) g = lo + (1 - lo) * (ph - this.a - this.h) / this.rl;
+    }
+    this.l = l * g; this.r = r * g;
+  }
+}
+// Two crossfaded read heads sliding through a delay line.
+class PitchShift extends Fx {
+  d = [new Float32Array(16384), new Float32Array(16384)]; w = 0; ph = 0;
+  block(e) { this.ratio = Math.pow(2, this.get('pitch', e.v) / 12); this.W = Math.min(8000, Math.max(64, this.get('chunk_size', e.v) * sampleRate / 44100)); this.mix = this.get('mix', e.v); }
+  read(buf, d) { const p = this.w - d, i = Math.floor(p), f = p - i; return buf[i & 16383] * (1 - f) + buf[(i + 1) & 16383] * f; }
+  step(l, r) {
+    this.d[0][this.w & 16383] = l; this.d[1][this.w & 16383] = r;
+    this.ph = (this.ph + (1 - this.ratio) / this.W + 1) % 1;
+    const p2 = (this.ph + 0.5) % 1, g1 = 1 - Math.abs(2 * this.ph - 1), d1 = this.ph * this.W + 1, d2 = p2 * this.W + 1;
+    this.wet(l, r, this.read(this.d[0], d1) * g1 + this.read(this.d[0], d2) * (1 - g1), this.read(this.d[1], d1) * g1 + this.read(this.d[1], d2) * (1 - g1), this.mix);
+    this.w++;
+  }
+}
+// Laser filters: v sweeps the cutoff on a log scale.
+class Filter extends Fx {
+  f = new Biquad();
+  block(e) {
+    const v = this.get('v', e.v); this.mix = this.get('mix', e.v); this.k = 1;
+    if (this.type === 'peak') {
+      const db = 15 * this.get('gain', e.v) / 0.5 * Math.min(1, v / 0.15) * (1 - 0.45 * Math.max(0, v - 0.15) / 0.85);
+      this.f.set('peak', 50 * Math.pow(180, v), 1.2, db); this.k = 1 / (1 + db / 24);
+    } else if (this.type === 'hp') this.f.set('hp', 100 * Math.pow(22, v), 'q' in this.p ? this.get('q', e.v) : 2);
+    else this.f.set('lp', 15000 * Math.pow(800 / 15000, v), 'q' in this.p ? this.get('q', e.v) : 2);
+  }
+  step(l, r) { this.wet(l, r, this.f.run(l, 0) * this.k, this.f.run(r, 1) * this.k, this.mix); }
+}
+const filter = type => class extends Filter { type = type; };
+const EFFECTS = {
+  retrigger: Repeat, echo: Repeat, gate: Gate, flanger: Flanger, pitch_shift: PitchShift, bitcrusher: Bitcrusher, phaser: Phaser,
+  wobble: Wobble, tapestop: Tapestop, sidechain: Sidechain,
+  peaking_filter: filter('peak'), high_pass_filter: filter('hp'), low_pass_filter: filter('lp'),
+};
+const last = (list, t) => { let x = null; for (const e of list) { if (e[0] > t) break; x = e; } return x; };
+
+class KsmEffects extends AudioWorkletProcessor {
+  constructor() {
+    super(); this.data = null; this.clock = null; this.reset();
+    this.port.onmessage = e => { if (e.data.type === 'data') this.data = e.data; else this.clock = e.data; };
+  }
+  reset() { this.stages = [{amt: 0}, {amt: 0}, {amt: 0, v: 0}]; }
+  // One effect slot: a new segment gets a fresh effect; a finished one fades out before it is dropped.
+  stage(s, seg, active, env) {
+    if (seg && seg !== s.seg && EFFECTS[seg.type]) { s.seg = seg; s.fx = new EFFECTS[seg.type](seg); }
+    s.target = active && seg === s.seg ? 1 : 0;
+    if (!s.fx || (!s.target && s.amt < 1e-4)) { s.amt = 0; return null; }
+    s.fx.block(env); return s;
+  }
+  laserValue(t) {
+    let v = -1;
+    for (const l of this.data.lasers) {
+      const p = l.pts; if (t < p[0].t || t > p[p.length - 1].t + 0.05) continue;
+      let x = p[p.length - 1].b;
+      for (let i = 0; i + 1 < p.length; i++) if (p[i].t <= t && t < p[i + 1].t) { x = p[i].b + (p[i + 1].a - p[i].b) * (t - p[i].t) / (p[i + 1].t - p[i].t); break; }
+      v = Math.max(v, l.side ? 1 - x : x);
+    }
+    return v;
+  }
+  process(inputs, outputs) {
+    const inp = inputs[0], out = outputs[0], n = out[0].length, c = this.clock, d = this.data;
+    const L = inp[0], R = inp[1] || inp[0];
+    if (!L) { out.forEach(ch => ch.fill(0)); return true; }
+    if (!d || !c || !c.on) { out[0].set(L); out[1].set(R); this.reset(); return true; }
+    const t0 = c.chart + (currentTime - c.ctx) * c.rate, dt = c.rate / sampleRate;
+    const bpm = last(d.bpms, t0)?.[1] || d.bpms[0][1], ms = last(d.measures, t0)?.[0] ?? 0;
+    const env = {t: t0, ms, v: 0, spc: sampleRate / c.rate, len: x => x >= 0 ? x * 240 / bpm : -x};
+    const active = [];
+    for (let lane = 0; lane < 2; lane++) {
+      const seg = d.fx[lane].find(s => s.t0 <= t0 && t0 < s.t1) || null;
+      const s = this.stage(this.stages[lane], seg, !!seg, env); if (s) active.push(s);
+    }
+    const lv = this.laserValue(t0), ls = this.stages[2];
+    if (lv >= 0) ls.v += (lv - ls.v) * 0.3;
+    const s = this.stage(ls, last(d.laserFx, t0)?.[1] || null, lv >= 0, {...env, v: ls.v}); if (s) active.push(s);
+    for (let i = 0; i < n; i++) {
+      let l = L[i], r = R[i]; const t = t0 + i * dt;
+      for (const s of active) {
+        s.amt += (s.target - s.amt) * (s.target ? 0.005 : s === ls ? 0.0005 : 0.005);
+        s.fx.step(l, r, t); l += (s.fx.l - l) * s.amt; r += (s.fx.r - r) * s.amt;
+      }
+      out[0][i] = l; out[1][i] = r;
+    }
+    return true;
+  }
+}
+registerProcessor('ksm-effects', KsmEffects);
+</script>
 <script id="chart-data" type="application/json">__CHART_JSON__</script>
 <script>
 const chart = JSON.parse(document.getElementById('chart-data').textContent);
@@ -167,6 +380,7 @@ async function play() {
   if (playing) return;
   playing = true; anchorAt = 0; scheduled = chartTime; $('overlay').hidden = true; $('play').textContent = '❚❚ PAUSE';
   measureLatency();
+  ensureEffects();
   if (hasAudio) { audio.playbackRate = rate; audio.currentTime = Math.max(0, chartTime + offset); try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') { pause(); $('overlay').hidden = false; } } }
   else { virtualStart = chartTime; virtualAt = performance.now(); }
   ensureSound();
@@ -204,6 +418,112 @@ function tick(hi, delay = 0) {
   if (!ctx) return; const t = ctx.currentTime + Math.max(0, delay), o = ctx.createOscillator(), g = ctx.createGain();
   o.frequency.value = hi ? 1760 : 1320; g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
   o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.05);
+}
+
+// ---- audio effects: FX long effects and laser filters run in an AudioWorklet (#fx-worklet), FX chip key
+// sounds are synthesized here. Approximations from the KSON spec, as if every FX long were held and every
+// laser followed.
+const EFFECT_DEFAULTS = {
+  retrigger: {update_period: '1/2', wave_length: '0', rate: '70%', update_trigger: 'off', mix: '0%>100%'},
+  gate: {wave_length: '0', rate: '50%', mix: '0%>90%'},
+  flanger: {period: '2.0', delay: '30samples', depth: '45samples', feedback: '60%', stereo_width: '0%', vol: '75%', mix: '0%>80%'},
+  pitch_shift: {pitch: '0>12', chunk_size: '700samples', overlap: '40%', mix: '0%>100%'},
+  bitcrusher: {reduction: '0samples-30samples', mix: '0%>100%'},
+  phaser: {period: '1/2', stage: '6', freq_1: '1500Hz', freq_2: '20000Hz', q: '0.707', feedback: '35%', stereo_width: '75%', hi_cut_gain: '-8.0dB', mix: '0%>50%'},
+  wobble: {wave_length: '0', freq_1: '500Hz', freq_2: '20000Hz', q: '1.414', mix: '0%>80%'},
+  tapestop: {speed: '50%', trigger: 'off>on', mix: '0%>100%'},
+  echo: {update_period: '0', wave_length: '0', update_trigger: 'off>on', feedback_level: '60%', mix: '0%>100%'},
+  sidechain: {period: '1/4', hold_time: '50ms', attack_time: '10ms', release_time: '1/8', ratio: '1.0>5.0'},
+  peaking_filter: {v: '0%-100%', gain: '50%', mix: '0%>100%'},
+  high_pass_filter: {v: '0%-100%', mix: '0%>100%'},
+  low_pass_filter: {v: '0%-100%', mix: '0%>100%'},
+};
+const audioEffect = chart.audio?.audio_effect || {};
+const effectDefs = {fx: {}, laser: {}};
+for (const type of Object.keys(EFFECT_DEFAULTS)) effectDefs[type.endsWith('filter') ? 'laser' : 'fx'][type] = {type};
+effectDefs.laser.bitcrusher = {type: 'bitcrusher'};
+for (const kind of ['fx', 'laser']) for (const [name, d] of audioEffect[kind]?.def || []) effectDefs[kind][name] = d;
+// "Off>OnMin-OnMax" → numbers; lengths become measures, or negative seconds.
+function paramUnit(s) {
+  s = s.trim(); let m;
+  if (s === 'on' || s === 'off') return s === 'on' ? 1 : 0;
+  if ((m = s.match(/^1\/(\d+)$/))) return 1 / +m[1];
+  if (s.endsWith('samples') || s.endsWith('Hz') && !s.endsWith('kHz') || s.endsWith('dB')) return parseFloat(s);
+  if (s.endsWith('kHz')) return parseFloat(s) * 1000;
+  if (s.endsWith('ms')) return -parseFloat(s) / 1000;
+  if (s.endsWith('%')) return parseFloat(s) / 100;
+  if (s.endsWith('s')) return -parseFloat(s);
+  return parseFloat(s) || 0;
+}
+function param(s) {
+  const [off, on] = String(s).includes('>') ? String(s).split('>') : [null, String(s)];
+  const m = on.match(/^(-?[^-]+)(?:-(-?.+))?$/) || [on, on];
+  const min = paramUnit(m[1]), max = m[2] === undefined ? min : paramUnit(m[2]);
+  return {off: off === null ? min : paramUnit(off), min, max};
+}
+function effectOf(kind, name, extra = {}) {
+  const d = effectDefs[kind][name]; if (!d || !EFFECT_DEFAULTS[d.type]) return null;
+  const raw = {...EFFECT_DEFAULTS[d.type], ...d.v, ...extra};
+  return {type: d.type, p: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, param(v)]))};
+}
+const fxSegs = [[], []];
+{ const events = [[], []];
+  for (const [name, lanes] of Object.entries(audioEffect.fx?.long_event || {})) lanes.forEach((list, i) => list.forEach(e => {
+    const [y, extra] = Array.isArray(e) ? e : [e, {}]; events[i]?.push([y, name, extra]);
+  }));
+  for (const n of notes) if (n.kind === 'fx' && n.long) {
+    const list = events[n.lane].filter(e => n.y0 <= e[0] && e[0] < n.y1).sort((a, b) => a[0] - b[0]);
+    list.forEach((e, k) => { const fx = effectOf('fx', e[1], e[2]); if (fx) fxSegs[n.lane].push({t0: pulseToSec(e[0]), t1: k + 1 < list.length ? pulseToSec(list[k + 1][0]) : n.t1, ...fx}); });
+  }
+}
+const laserFx = [[-1e9, effectOf('laser', 'peaking_filter')]];
+for (const [name, ys] of Object.entries(audioEffect.laser?.pulse_event || {})) for (const y of ys) laserFx.push([pulseToSec(y), effectOf('laser', name)]);
+laserFx.sort((a, b) => a[0] - b[0]);
+const keySounds = [];
+for (const [name, lanes] of Object.entries(chart.audio?.key_sound?.fx?.chip_event || {})) for (const list of lanes) for (const e of list) {
+  const [y, o] = Array.isArray(e) ? e : [e, {}]; keySounds.push({t: pulseToSec(y), name, vol: o?.vol ?? 1});
+}
+keySounds.sort((a, b) => a.t - b.t);
+const measureStarts = []; for (let m = 0; measureStarts.length < 5000; m++) { const s = pulseToSec(measureToPulse(m)); measureStarts.push([s]); if (s > lastSec) break; }
+let fxNode = null, fxLoading = null;
+$('effects').checked = hasAudio; $('effects').disabled = !hasAudio;
+function ensureEffects() {
+  if (!hasAudio || !$('effects').checked || fxLoading || !ctx?.audioWorklet) return;
+  fxLoading = (async () => {
+    // A blob: module does not load from file:// (null origin); a data: URL does.
+    const code = $('fx-worklet').textContent;
+    try { await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([code], {type: 'text/javascript'}))); }
+    catch (e) { await ctx.audioWorklet.addModule('data:text/javascript;charset=utf-8,' + encodeURIComponent(code)); }
+    const node = new AudioWorkletNode(ctx, 'ksm-effects', {outputChannelCount: [2]});
+    node.port.postMessage({type: 'data', fx: fxSegs, laserFx, measures: measureStarts, bpms: bpms.map(([, s, b]) => [s, b]),
+      lasers: lasers.map(l => ({side: l.side, pts: l.pts.map(({t, a, b}) => ({t, a, b}))}))});
+    ctx.createMediaElementSource(audio).connect(node).connect(ctx.destination);
+    fxNode = node;
+  })().catch(e => { console.warn('audio effects unavailable', e); $('effects').checked = false; $('effects').disabled = true; });
+}
+$('effects').onchange = () => { if (playing) ensureEffects(); };
+let noise = null;
+function keySound(name, vol, delay) {
+  if (!ctx || !/^(clap|snare)/.test(name)) return;   // sound files next to the chart are not available here
+  noise ||= (() => { const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; })();
+  const t = ctx.currentTime + Math.max(0, delay), out = ctx.createGain(); out.gain.value = vol * 0.6; out.connect(ctx.destination);
+  const burst = (at, len, freq, q, level) => {
+    const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    s.buffer = noise; f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q;
+    g.gain.setValueAtTime(level, at); g.gain.exponentialRampToValueAtTime(0.001, at + len);
+    s.connect(f).connect(g).connect(out); s.start(at, Math.random() * 0.5); s.stop(at + len + 0.02);
+  };
+  if (name.startsWith('clap')) {
+    const f = name === 'clap_impact' ? 900 : 1300;
+    for (const k of [0, 0.01, 0.02]) burst(t + k, 0.012, f, 1.4, 1);
+    burst(t + 0.03, name === 'clap_punchy' ? 0.06 : 0.15, f, 1, 0.8);
+  } else {
+    burst(t, 0.16, name === 'snare_lo' ? 1600 : 2600, 0.7, 0.9);
+    const o = ctx.createOscillator(), g = ctx.createGain(), f0 = name === 'snare_lo' ? 150 : 210;
+    o.type = 'triangle'; o.frequency.setValueAtTime(f0 * 1.5, t); o.frequency.exponentialRampToValueAtTime(f0, t + 0.03);
+    g.gain.setValueAtTime(0.8, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+    o.connect(g).connect(out); o.start(t); o.stop(t + 0.1);
+  }
 }
 
 // ---- drawing
@@ -288,14 +608,16 @@ function afterDraw(t) {
   if (playing) {
     for (const n of notes) if (n.t0 > lastTick && n.t0 <= t) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = 1;
     // Ticks follow the sound clock (they share its output latency), scheduled slightly ahead.
-    if (ctx && $('assist').checked) {
+    if (ctx) {
       const a = audioNow(), until = a + 0.1 * rate;
-      for (const n of notes) if (n.t0 > scheduled && n.t0 <= until) tick(n.kind === 'fx', (n.t0 - a) / rate);
+      if ($('assist').checked) for (const n of notes) if (n.t0 > scheduled && n.t0 <= until) tick(n.kind === 'fx', (n.t0 - a) / rate);
+      if ($('effects').checked) for (const k of keySounds) if (k.t > scheduled && k.t <= until) keySound(k.name, k.vol, (k.t - a) / rate);
       scheduled = until;
     }
     for (const n of notes) if (n.long && n.t0 <= t && t <= n.t1) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = Math.max(flash[n.kind === 'bt' ? n.lane : 4 + n.lane], 0.6);
     lastTick = t;
   }
+  if (fxNode) fxNode.port.postMessage({type: 'clock', ctx: ctx.currentTime, chart: audioNow(), rate, on: playing && $('effects').checked});
   let chain = 0; for (const e of chainEvents) { if (e <= t) chain++; else break; }
   $('chain').textContent = chain; $('combo-n').textContent = chain; $('combo').hidden = !playing || chain === 0;
   $('bpm').textContent = Math.round(bpmAtSec(Math.max(0, t)) * 10) / 10;

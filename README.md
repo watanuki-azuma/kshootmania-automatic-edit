@@ -25,11 +25,11 @@ uv run pytest
 | `ksmauto decompile chart.(kson\|ksh) -o draft.ksmd` | KSON/KSH → DSL |
 | `ksmauto convert chart.ksh -o chart.kson` | KSH → KSON |
 | `ksmauto lint FILE [--analysis a.json]` | 手が足りない配置・速すぎる縦連・音のない位置のノーツなど |
-| `ksmauto stats FILE` | ノーツ数・NPS・推定レベル |
+| `ksmauto stats FILE` | ノーツ数・チェイン数（KSM v2 の数え方）・NPS・推定レベル |
 | `ksmauto render FILE --measures 16-47 -o page.png` | 譜面を PNG に描画 |
 | `ksmauto validate FILE` / `ksmauto info FILE` | KSON 構造検証 / 概要 |
 | `ksmauto edit chart.kson --audio SONG.ogg` | ブラウザで同期再生・手修正 |
-| `ksmauto preview FILE [--audio SONG] -o preview.html` | 音源を埋め込んだ単体 HTML の再生プレビュー（サーバー不要。共有用）。KSM v2 と同じ透視・レーザーによる傾きの 3D 表示と、平面表示を切り替えられる |
+| `ksmauto preview FILE [--audio SONG] -o preview.html` | 音源を埋め込んだ単体 HTML の再生プレビュー（サーバー不要。共有用）。KSM v2 と同じ透視・レーザーによる傾きの 3D 表示と、平面表示を切り替えられる。FX ロング・レーザーのエフェクトと FX のキー音を近似で鳴らす（KSON 仕様から書いた独自実装） |
 | `ksmauto sdvxin DIR [-o x.kson]` / `ksmauto sdvxin --report ROOT` | 手元に取得した sdvx.in 譜面（JSON / 画像レイヤー）を KSON に復元 / 公表ノーツ数と照合 |
 
 `FILE` は `.kson` / `.ksh` / `.ksmd` のどれでもよい。
@@ -43,7 +43,7 @@ uv run pytest
 - `tests/eval/eval_sdvxin.py [ROOT]` — 復元精度の評価。`tests/eval/sdvxin_side_by_side.py DIR` で元画像と復元結果を並べた PNG を `out/sdvxin/` に出す
 
 復元精度（47 譜面: JSON 7 / 画像 40）: JSON はチップ数完全一致、ロング・レーザーのチェイン数も推定モデルとの誤差 3% 以内。画像はチップ数完全一致 34/40（外れは最大 3 個）、ロング 37/40、レーザー 33/40、KSON 検証は全件通過。
-ロングのチェイン数は公式の数え方が不明なため、JSON 譜面に合わせた経験式（72 pulse ごと、BPM 255 以上で倍）で照合している。
+sdvx.in の公表チェイン数は SDVX の数え方で、ロングの数え方が KSM と違うため、JSON 譜面に合わせた経験式（72 pulse ごと、BPM 255 以上で倍）で照合している（`stats` の `chains` は KSM v2 の数え方で、こちらとは別）。
 
 ## Skills
 

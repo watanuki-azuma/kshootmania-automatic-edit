@@ -90,6 +90,32 @@ time_sig 7/8         # 20小節目から 7/8（必ず小節頭）
 - 直角だけの単独レーザーは `0 l 0>1`（KSON 上は 1 点のセクション）。
 - 1行で 1 セクション。同じレーンのセクションは重なってはいけない。
 
+### オーディオエフェクト
+
+FX ロング・レーザーにかかる音のエフェクトと、FX チップの打鍵音（キー音）。KSM の組み込み名をそのまま使う。
+
+```
+def fx slowstop tapestop speed=20%     # 独自のエフェクト定義（どこに書いてもよい。名前 種類 パラメータ）
+def laser lpf2 low_pass_filter v=0%-80%
+
+@m8
+0 L~2@gate(wave_length=1/16)           # FX ロングにエフェクト（括弧内はこのノーツだけのパラメータ）
+0 R~4@bitcrusher(reduction=10samples)
+2 L@clap(vol=0.6)                      # FX チップにキー音（パラメータは vol だけ）
+2 fx_effect L@retrigger(wave_length=1/8)   # ロングの途中でエフェクトを切り替える
+3 R~1@slowstop
+3 L~1@-                                # エフェクトなし
+0 laser_effect low_pass_filter         # この位置からレーザーのエフェクトを切り替える（既定は peaking_filter）
+```
+
+- FX の組み込み: `retrigger` `gate` `flanger` `pitch_shift` `bitcrusher` `phaser` `wobble` `tapestop` `echo` `sidechain`。
+  `retrigger` `gate` `wobble` は `wave_length` を指定しないと何も起きない（既定値 0）。
+- レーザーの組み込み: `peaking_filter` `high_pass_filter` `low_pass_filter` `bitcrusher`。
+- キー音の組み込み: `clap` `clap_impact` `clap_punchy` `snare` `snare_lo`（音源と同じフォルダのファイル名も可）。
+- パラメータの値は KSON と同じ書式（`1/16`、`30%`、`10samples`、`Off>OnMin-OnMax` など）。
+- `copy` / `mirror` はエフェクト・キー音も一緒に写す。
+- `--base` で compile したときは、ドラフトに書いた `def` / `long_event` / `pulse_event` / `chip_event` で置き換え、それ以外（`param_change` など）は元のまま残す。
+
 ### コピー
 
 ```
