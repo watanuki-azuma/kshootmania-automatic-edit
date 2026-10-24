@@ -32,7 +32,7 @@ SUSTAIN_ROWS = {"bass": "bass", "vocal": "vocals", "other": "other"}
 # and never below FLOOR_DB under the loudest stem (a near-silent stem is all bleed).
 ACTIVE_DB = 20.0
 FLOOR_DB = 40.0
-# Pitch range (lowest note, semitones) for the dominant note at each `other` onset.
+# Pitch range (lowest note, semitones) of the `other` stem's note onsets.
 OTHER_PITCH = ("C2", 72)
 BPM_RANGE = (60.0, 300.0)
 # Prior for octave resolution: rhythm games mostly sit in this range.
@@ -50,6 +50,48 @@ def _band_flux(S: np.ndarray, freqs: np.ndarray, lo: float, hi: float) -> np.nda
     flux = np.maximum(flux, 0.0)
     peak = np.percentile(flux, 99.5)
     return flux / peak if peak > 0 else flux
+
+
+def _note_flux(y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Onset envelope and per-semitone attack strength from a constant-Q spectrum.
+
+    Each semitone is compared with its own recent past, so a new piano note shows up
+    even under a held pad, which a broadband flux misses.
+    """
+    fmin, bins = librosa.note_to_midi(OTHER_PITCH[0]), OTHER_PITCH[1]
+    # Half-length filters: low notes still rise within a few frames.
+    C = np.abs(librosa.cqt(y, sr=SR, hop_length=HOP, fmin=librosa.midi_to_hz(fmin),
+                           n_bins=bins * 3, bins_per_octave=36, filter_scale=0.5))
+    logc = np.log1p(100.0 * C / (C.max() + 1e-9))
+    # Compare with half a filter length back (low notes rise slowly) and +-1/3 semitone,
+    # so vibrato and slow swells do not count as attacks.
+    wide = maximum_filter1d(logc, 3, axis=0)
+    hz = librosa.cqt_frequencies(bins * 3, fmin=librosa.midi_to_hz(fmin), bins_per_octave=36)
+    lags = np.clip(np.round(0.5 / (2 ** (1 / 36) - 1) * SR / hz / 2 / HOP), 3, 24).astype(int)
+    rise = np.zeros_like(logc)
+    for lag in np.unique(lags):
+        rows = lags == lag
+        rise[rows, lag:] = np.maximum(0.0, logc[rows, lag:] - wide[rows, :-lag])
+    rise = np.vstack([rise[-1:] * 0, rise[:-1]]).reshape(bins, 3, -1).max(axis=1)  # semitone = its bin +-1
+    env = rise.sum(axis=0)
+    env = np.maximum(env - uniform_filter1d(env, 64), 0.0)
+    peak = np.percentile(env, 99.5)
+    return (env / peak if peak > 0 else env), rise
+
+
+def _top_note(rise: np.ndarray, frame: int) -> int:
+    """Row of the highest note starting at `frame` (the melody over the chord).
+
+    Rows are harmonic-summed so a note's fundamental outscores its own overtones; among
+    the clear peaks of that sum, the highest one wins.
+    """
+    w = rise[:, frame:frame + 12].sum(axis=1)
+    s = w.copy()
+    for h, weight in ((2, 0.5), (3, 0.33), (4, 0.25)):
+        k = int(round(12 * np.log2(h)))
+        s[:-k] += weight * w[k:]
+    peaks = (s >= 0.6 * s.max()) & (s >= np.roll(s, 1)) & (s >= np.roll(s, -1))
+    return int(np.flatnonzero(peaks)[-1])
 
 
 def _comb_score(env: np.ndarray, period: float, phase: float) -> float:
@@ -370,19 +412,13 @@ def _stem_tracks(stems_dir: Path, period: float) -> dict:
     n = min(len(voiced), len(active["vocal"]))
     active["vocal"] = active["vocal"][:n] & voiced[:n]
     pitch = np.where(active["vocal"], librosa.hz_to_midi(f0[:n]), np.nan)
-    drums = _drum_flux(loaded["drums"][0])
-    # Harmonic-summed CQT salience; the stem is polyphonic, so this is the loudest
-    # note around each onset (piano/synth contour), not a transcribed melody.
-    fmin, bins = librosa.note_to_midi(OTHER_PITCH[0]), OTHER_PITCH[1]
-    sal = np.abs(librosa.cqt(loaded["other"][0], sr=SR, hop_length=HOP,
-                             fmin=librosa.midi_to_hz(fmin), n_bins=bins, bins_per_octave=12))
-    C = sal.copy()
-    for h, w in ((2, 0.5), (3, 0.33), (4, 0.25)):
-        k = int(round(12 * np.log2(h)))
-        sal[:-k] += w * C[k:]
+    envs = _drum_flux(loaded["drums"][0])
+    # The stem is polyphonic: onsets and pitch come from the note that starts (the
+    # piano/synth contour), not a transcribed melody.
+    envs["other"], attack = _note_flux(loaded["other"][0])
     peaks = {}
     for row, (stem, lo, hi) in STEM_ROWS.items():
-        env = drums[row] if row in drums else _band_flux(loaded[stem][1], freqs, lo, hi)
+        env = envs[row] if row in envs else _band_flux(loaded[stem][1], freqs, lo, hi)
         times, heights = _peaks(env, fps, period)
         if row in active:  # drop onsets where the stem itself is quiet
             frames = np.minimum((times * fps).astype(int), len(active[row]) - 1)
@@ -390,8 +426,9 @@ def _stem_tracks(stems_dir: Path, period: float) -> dict:
             times, heights = times[keep], heights[keep]
         peaks[row] = (times, heights)
     times = peaks["other"][0]
-    frames = np.minimum((times * fps).astype(int), sal.shape[1] - 1)
-    other_pitch = np.array([fmin + sal[:, i:i + 6].mean(axis=1).argmax() for i in frames], dtype=float)
+    frames = np.minimum((times * fps).astype(int), attack.shape[1] - 1)
+    fmin = librosa.note_to_midi(OTHER_PITCH[0])
+    other_pitch = np.array([fmin + _top_note(attack, i) for i in frames], dtype=float)
     return {"peaks": peaks, "active": active, "pitch": pitch, "other_pitch": (times, other_pitch)}
 
 
