@@ -36,6 +36,68 @@ def test_hand_overload_needs_moving_knob():
     assert lint(c) == []
 
 
+def _analysis(measures):
+    return {"audio": {"duration_sec": 30}, "tempo": {"time_sig": [4, 4]}, "measures": measures}
+
+
+def test_thin_vocal_with_laser():
+    vocal = [[b / 2, 0.3] for b in range(7)]
+    analysis = _analysis([{"index": 0, "energy": 0.8, "onsets": {"all": vocal},
+                           "stems": {"onsets": {"vocal": vocal}}}])
+    c = _chart(bt=[[[0, 240]], [], [], []], fx=[[480], []],
+               laser=[[[0, [[0, 0.0], [960, 1.0]]]], []])
+    findings = lint(c, analysis)
+    thin = [f for f in findings if f.rule == "thin"]
+    assert len(thin) == 1
+    assert (thin[0].level, thin[0].where) == ("info", "m0")
+    assert thin[0].message == "vocal sings 7 notes, 2 button notes: follow its rhythm or make the rest deliberate"
+    assert not any(f.rule == "empty-loud" for f in findings)
+    c["note"]["bt"] = [[], [], [], []]
+    c["note"]["fx"] = [[], []]
+    findings = lint(c, analysis)
+    assert any(f.rule == "thin" and "0 button notes" in f.message for f in findings)
+    assert not any(f.rule == "empty-loud" for f in findings)
+
+
+def test_thin_thresholds():
+    analysis = _analysis([
+        {"index": i, "energy": 0.1, "onsets": {},
+         "stems": {"onsets": {"vocal": [[b, s] for b, s in enumerate(strengths)]}}}
+        for i, strengths in enumerate(([0.3, 0.6, 1.0, 0.299], [0.3] * 4, [0.3] * 4))
+    ])
+    c = _chart(bt=[[960, 1200, 1440, 1920], [[1920, 240]], [], []],
+               fx=[[1920], [[1920, 480]]])
+    thin = [f for f in lint(c, analysis) if f.rule == "thin"]
+    assert len(thin) == 1
+    assert thin[0].where == "m1"
+    assert thin[0].message == "vocal sings 4 notes, 3 button notes: follow its rhythm or make the rest deliberate"
+
+
+def test_thin_requires_vocal_stems():
+    vocal = [[b, 1.0] for b in range(4)]
+    analysis = _analysis([
+        {"index": 0, "energy": 0.8, "onsets": {"mid": vocal}},
+        {"index": 1, "energy": 0.8, "onsets": {}, "stems": {"onsets": {"vocal": []}}},
+        {"index": 2, "energy": 0.8, "onsets": {}, "stems": {"onsets": {"other": vocal}}},
+    ])
+    findings = lint(_chart(), analysis)
+    assert not any(f.rule == "thin" for f in findings)
+    assert [f.where for f in findings if f.rule == "empty-loud"] == ["m0", "m1", "m2"]
+
+
+def test_thin_counts_only_starts_in_measure():
+    c = _chart(bt=[[[0, 1440]], [720], [1440, 1680], [1440]])
+    c["beat"]["time_sig"] = [[0, [3, 4]]]
+    vocal = [[b / 2, 0.6] for b in range(4)]
+    analysis = _analysis([{"index": 1, "energy": 0.1, "onsets": {"mid": vocal},
+                           "stems": {"onsets": {"vocal": vocal}}}])
+    analysis["tempo"]["time_sig"] = [3, 4]
+    thin = [f for f in lint(c, analysis) if f.rule == "thin"]
+    assert len(thin) == 1
+    assert thin[0].where == "m1"
+    assert thin[0].message == "vocal sings 4 notes, 1 button notes: follow its rhythm or make the rest deliberate"
+
+
 def test_stats_on_gram():
     s = stats(load_ksh(GRAM))
     assert s["bt_chips"] > 100 and s["slams"] > 0

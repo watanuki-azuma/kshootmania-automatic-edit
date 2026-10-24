@@ -93,6 +93,7 @@ uv run ksmauto render work/draft.ksmd --measures 0-31 -o work/page.png
 
 - compile エラーは全件まとめて出る。行番号の箇所を直す。
 - lint: `hand-overload`（手が 3 本要る）、`fast-jack`（縦連が速すぎ）は原則ゼロにする。`unaligned` が出たら、音の無い位置のノーツを解析と照合して直す。`empty-loud` は意図した休憩でなければ埋める。
+- `thin`（歌っているのにボタンが薄い）は「楽器別の型」のボーカルの型で埋めるか、休符だと伝わる締めと入りを作る。
 - stats の `level_estimate` が目標 ±1.5 に入るまで密度を調整する。
 - render の PNG を開いて目で見る: 同じ形の繰り返しが単調すぎないか、レーザーとボタンが同じ手に重なっていないか、山場で密度が上がっているか。
 - FX の使い方を「FX の使い方」の表と比べる: FX チップが BT のついでばかりになっていないか、FX ロング（短いもの）と L+R 同時があるか。

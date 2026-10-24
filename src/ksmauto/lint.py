@@ -179,12 +179,22 @@ def _lint_against_audio(chart, timing, events, analysis):
             sample = ", ".join(_where(timing, chart, y) for y in sorted(set(unaligned))[:12])
             out.append(Finding("info", "unaligned", "-",
                                f"{ratio:.0%} of button notes have no detected onset nearby (e.g. {sample})"))
+    button_counts = {}
+    for _, _, y, _ in events:
+        idx = timing.pulse_to_measure(y)[0]
+        button_counts[idx] = button_counts.get(idx, 0) + 1
     covered = {timing.pulse_to_measure(y)[0] for _, _, y, _ in events}
     for side, a, b, _ in _laser_spans(chart):
         covered.update(range(timing.pulse_to_measure(a)[0], timing.pulse_to_measure(b)[0] + 1))
     for m in analysis["measures"]:
         if m["energy"] >= 0.6 and m["index"] not in covered:
             out.append(Finding("info", "empty-loud", f"m{m['index']}", "loud measure with no notes"))
+        if "stems" in m:
+            vocal = sum(1 for _, strength in m["stems"]["onsets"].get("vocal", []) if strength >= 0.3)
+            buttons = button_counts.get(m["index"], 0)
+            if vocal >= 4 and buttons < 4:
+                out.append(Finding("info", "thin", f"m{m['index']}",
+                                   f"vocal sings {vocal} notes, {buttons} button notes: follow its rhythm or make the rest deliberate"))
     return out
 
 
