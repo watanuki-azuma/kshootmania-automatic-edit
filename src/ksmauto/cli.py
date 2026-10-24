@@ -123,9 +123,24 @@ def main(argv=None):
     render_p.add_argument("--measures", help="measure range, e.g. 16-47")
     render_p.add_argument("--per-column", type=int, default=4)
     render_p.add_argument("--columns", type=int, default=8)
+    edit = sub.add_parser("edit", help="preview and edit a chart in a local browser")
+    edit.add_argument("input", type=Path)
+    edit.add_argument("--audio", type=Path)
+    edit.add_argument("--analysis", type=Path)
+    edit.add_argument("--port", type=int, default=8765)
+    edit.add_argument("--no-browser", action="store_true")
     for command in ("validate", "info"):
         sub.add_parser(command).add_argument("files", type=Path, nargs="+")
     args = parser.parse_args(argv)
+    if args.command == "edit":
+        from .editor import run
+
+        try:
+            return run(args.input, audio=args.audio, analysis=args.analysis,
+                       port=args.port, no_browser=args.no_browser)
+        except (OSError, ValueError) as exc:
+            print(f"{args.input}: {exc}", file=sys.stderr)
+            return 1
     if args.command in {"lint", "stats", "render"}:
         return _chart_tools(args)
     if args.command in {"compile", "decompile"}:
