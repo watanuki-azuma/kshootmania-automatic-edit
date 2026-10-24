@@ -38,9 +38,12 @@ MUSCRIPTOR_ROWS = {"acoustic_piano": "piano", "electric_piano": "piano",
 
 
 def _write_muscriptor_notes(events: list, out: Path) -> list[Path]:
-    """Write MuScriptor's JSON events (note starts and ends) as <out>/<row>.notes.json."""
+    """Write MuScriptor's JSON events (note starts and ends) as <out>/<row>.notes.json.
+
+    Every row is written, empty when nothing was heard, so an earlier run's notes do not linger.
+    """
     starts = {e["index"]: e for e in events if e["type"] == "start"}
-    rows = {}
+    rows = {row: [] for row in sorted({*MUSCRIPTOR_ROWS.values(), "other"} - {None})}
     for e in events:
         if e["type"] != "end" or e["start_event_index"] not in starts:
             continue
@@ -48,7 +51,7 @@ def _write_muscriptor_notes(events: list, out: Path) -> list[Path]:
         row = MUSCRIPTOR_ROWS.get(start["instrument"], "other")
         if row:
             # MuScriptor has no velocity.
-            rows.setdefault(row, []).append([round(start["start_time"], 4), round(e["end_time"], 4),
+            rows[row].append([round(start["start_time"], 4), round(e["end_time"], 4),
                                              int(start["pitch"]), 1.0])
     out.mkdir(parents=True, exist_ok=True)
     paths = []

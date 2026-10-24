@@ -53,7 +53,7 @@ LLM が「どこに何を置くか」を判断するための材料を出す。J
 - `stems.sustain`: 1/4 拍の区間の半分以上でステムが鳴っていれば鳴っているとする。ボーカルは pYIN の有声判定も満たす区間だけ。
 - `stems.other_pitch`: `other` の各発音から約 70 ms の、半音ごとの立ち上がり（C2 から 6 オクターブ）に倍音（2〜4 倍）を足し込み、上位の山のうち一番高い音を取る。伸ばしている音や和音の低音より、その瞬間に弾かれたメロディ（和音の最高音）を取りやすい。採譜ではないので、和音に埋もれた弱い発音（強さ 0.3 未満、テキストでは `.`）の音程は当てにならない。ピアノ・シンセの上下の動きを見る用。
 - `stems.onsets.piano` / `stems.piano_pitch`: `separate --model htdemucs_6s` で `piano.wav` があるときだけ。`piano.notes.json` があればそれを使い、なければ `other` と同じ方法で音から取る。`other` も `other.notes.json` があれば採譜を使う。JSON だけで段は増えず、対応する wav が必要。
-- `<row>.notes.json`: 開始秒でソートした `[[開始秒, 終了秒, MIDI, 強さ 0-1], ...]`。`ksmauto transcribe stems/piano.wav` は既定の ByteDance エンジンで `piano.notes.json` を書く。`ksmauto transcribe SONG.ogg --engine muscriptor --model small --python PY -o stems/` はミックスを楽器名で piano・guitar・bass・vocal（`voice`）・other（残り）に分けて書き、ドラムは除外する。`-o` はディレクトリ、省略時は音源のディレクトリ。MuScriptor の JSON 出力（元音源の秒位置）を使う。`analyze` が JSON を読むのは現状 `LANE_ROWS` の `other` / `piano` のみで、bass / guitar / vocal は音から解析する。
+- `<row>.notes.json`: 開始秒でソートした `[[開始秒, 終了秒, MIDI, 強さ 0-1], ...]`。`ksmauto transcribe stems/piano.wav` は既定の ByteDance エンジンで `piano.notes.json` を書く。`ksmauto transcribe SONG.ogg --engine muscriptor --model small --python PY -o stems/` はミックスを楽器名で piano・guitar・bass・vocal（`voice`）・other（残り）に分けて書き（聞こえなかった楽器も空の配列で上書きする）、ドラムは除外する。`-o` はディレクトリ、省略時は音源のディレクトリ。MuScriptor の JSON 出力（元音源の秒位置）を使う。`analyze` が JSON を読むのは現状 `LANE_ROWS` の `other` / `piano` のみで、bass / guitar / vocal は音から解析する。
 - 採譜を使うときは、ほかのステムと同じく鳴っていない区間に始まる音は捨て、35 ms 以内に始まる音を和音として 1 つの発音にまとめ、強さは最大、音程は最高音にする。最高音が、すでに鳴っている音のちょうど 1 オクターブ上なら倍音の誤検出として 1 オクターブ下げる。強さは曲中の 90 パーセンタイルで割る。MuScriptor は velocity を推定しないため全音 1.0 とし、正規化後も全発音の強さは 1.0 になる（音量の強弱は表さない）。
 
 ## テキスト（LLM 用）

@@ -80,8 +80,8 @@ def test_transcribe_muscriptor(tmp_path, monkeypatch, capsys, model):
     assert main(args) == 0
     assert json.loads((out / "piano.notes.json").read_text()) == [[1, 2, 60, 1.0]]
     assert json.loads((out / "other.notes.json").read_text()) == [[0, 1, 72, 1.0]]
-    assert capsys.readouterr().out.splitlines() == [f"1 notes: {out / 'other.notes.json'}",
-                                                 f"1 notes: {out / 'piano.notes.json'}"]
+    assert capsys.readouterr().out.splitlines() == [f"{n} notes: {out / f'{row}.notes.json'}" for row, n in
+                                                 (("bass", 0), ("guitar", 0), ("other", 1), ("piano", 1), ("vocal", 0))]
 
 
 @pytest.mark.parametrize("engine,package", [("bytedance", "piano_transcription_inference"), ("muscriptor", "muscriptor")])

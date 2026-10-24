@@ -33,9 +33,10 @@ def test_muscriptor_notes_rows(tmp_path):
     assert rows["other"] == [[0, 0.5, 72, 1.0], [1, 1.5, 72, 1.0]]
 
 
-def test_muscriptor_drums_only(tmp_path):
-    assert _write_muscriptor_notes(_events((0, 0.1, 36, "drums")), tmp_path) == []
-    assert not list(tmp_path.glob("*.notes.json"))
+def test_muscriptor_drums_only_clears_old_notes(tmp_path):
+    (tmp_path / "piano.notes.json").write_text("[[0, 1, 60, 0.8]]")
+    paths = _write_muscriptor_notes(_events((0, 0.1, 36, "drums")), tmp_path)
+    assert len(paths) == 5 and all(json.loads(p.read_text()) == [] for p in paths)
 
 
 def test_muscriptor_failure_does_not_write_notes(tmp_path, monkeypatch):
