@@ -211,8 +211,47 @@ def stats(chart: dict) -> dict:
         "peak_nps": round(peak / MAX_PEAK_WINDOW_SEC, 2),
         "laser_ratio": round(sum(timing.pulse_to_sec(b) - timing.pulse_to_sec(a) for _, a, b, _ in lasers) / span, 2),
     }
+    s.update(_complexity(chart, timing, events, span))
     s["level_estimate"] = estimate_level(s)
     return s
+
+
+def _complexity(chart, timing, events, span):
+    """Features that separate the high levels: chords, 16th streams, knob + button overlap."""
+    starts: dict[int, int] = {}
+    for _, _, y, _ in events:
+        starts[y] = starts.get(y, 0) + 1
+    ys = sorted(starts)
+    chords = sum(1 for y in ys if starts[y] >= 2)
+    # Longest run of starts no more than a 16th note apart (by time, so BPM matters).
+    best = run_start = 0.0
+    secs = [timing.pulse_to_sec(y) for y in ys]
+    for i in range(1, len(secs)):
+        beat = 60.0 / _bpm_at(chart, ys[i])
+        if secs[i] - secs[i - 1] > beat / 4 + 1e-6:
+            run_start = secs[i]
+        best = max(best, secs[i] - run_start)
+    moving = [r for side in chart.get("note", {}).get("laser", [])
+              for r in _moving_laser_ranges({"note": {"laser": [side]}})]
+    move_sec = sum(timing.pulse_to_sec(b) - timing.pulse_to_sec(a) for a, b in moving)
+    with_knob = sum(1 for _, _, y, _ in events if any(a <= y < b for a, b in moving))
+    n = max(len(events), 1)
+    return {
+        "chord_ratio": round(chords / max(len(ys), 1), 3),
+        "stream16_max_sec": round(best, 2),
+        "knob_move_ratio": round(move_sec / span, 3),
+        "knob_button_ratio": round(with_knob / n, 3),
+        "long_ratio": round(sum(1 for e in events if e[3] > 0) / n, 3),
+        "max_bpm": max(v for _, v in chart["beat"]["bpm"]),
+    }
+
+
+def _bpm_at(chart, y):
+    bpm = chart["beat"]["bpm"][0][1]
+    for py, v in chart["beat"]["bpm"]:
+        if py <= y:
+            bpm = v
+    return bpm
 
 
 # Least-squares fit on the 36 official corpus charts (tests/eval/fit_level.py), MAE ~1 level.
