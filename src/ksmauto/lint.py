@@ -82,7 +82,7 @@ def _moving_laser_ranges(chart):
             pts = [(y + ry, *_value(v)) for ry, v, *_ in points]
             for ya, va, vfa in pts:
                 if va != vfa:
-                    yield ya - pad, ya + pad
+                    yield ya - pad, ya + pad + 1
             for (ya, _, vfa), (yb, vb, _) in zip(pts, pts[1:]):
                 if vfa != vb:
                     yield ya, yb
@@ -136,7 +136,7 @@ def lint(chart: dict, analysis: dict | None = None) -> list[Finding]:
     moving = [list(_moving_laser_ranges({"note": {"laser": [side]}}))
               for side in chart.get("note", {}).get("laser", [])]
     for y in starts:
-        knobs = sum(1 for ranges in moving if any(a <= y <= b for a, b in ranges))
+        knobs = sum(1 for ranges in moving if any(a <= y < b for a, b in ranges))
         pressed = [(kind, lane) for kind, lane, ny, length in events
                    if ny == y or (length and ny < y < ny + length)]
         hands = knobs + _hands_for_buttons(pressed)

@@ -430,3 +430,9 @@ def test_cli_analyze_import_failure(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "__import__", no_analyze)
     assert main(["analyze", "song.ogg"]) == 1
     assert "install the audio extra: uv sync --extra audio" in capsys.readouterr().err
+
+
+def test_copy_single_measure():
+    chart, errors = compile_draft("title: t\nbpm: 120\n@m1\n0 A\n1 B\ncopy m1 -> m2 mirror\n")
+    assert not errors
+    assert chart["note"]["bt"][3] == [960 * 2] and chart["note"]["bt"][2] == [960 * 2 + 240]

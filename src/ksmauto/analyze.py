@@ -114,9 +114,25 @@ def _snap_bpm(env: np.ndarray, fps: float, bpm: float, score: float) -> float:
         r = round(bpm / grid) * grid
         if abs(r - bpm) <= 0.15:
             _, s = _best_phase(env, 60.0 * fps / r, steps=96)
-            if s >= 0.97 * score:
+            if s >= 0.9 * score:
                 return float(r)
     return round(bpm, 2)
+
+
+def _downbeat_phase(features, phase, period, beats_per_measure) -> int:
+    n_frames = features[0].shape[1]
+    edges = (phase + period * np.arange(int((n_frames - phase) / period) + 1)).astype(int)
+    if len(edges) < 4 * beats_per_measure:
+        return 0
+    total = np.zeros(beats_per_measure)
+    for feat in features:
+        beats = np.stack([feat[:, a:b].mean(axis=1) for a, b in zip(edges[:-1], edges[1:])], axis=1)
+        z = (beats - beats.mean(axis=1, keepdims=True)) / (beats.std(axis=1, keepdims=True) + 1e-9)
+        idx = np.arange(2, z.shape[1] - 2)
+        nov = np.array([np.linalg.norm(z[:, i - 2:i].mean(axis=1) - z[:, i:i + 2].mean(axis=1)) for i in idx])
+        score = np.array([nov[idx % beats_per_measure == k].mean() for k in range(beats_per_measure)])
+        total += score / score.mean()
+    return int(np.argmax(total))
 
 
 def _quantize(t_beats: np.ndarray, tol: float = 0.09) -> list[float | None]:
@@ -191,13 +207,12 @@ def analyze(path: str | Path, beats_per_measure: int = 4) -> dict:
     if _comb_score(bands["mid"], period, off) > _comb_score(bands["mid"], period, phase):
         phase = off
 
-    # Downbeat: the beat phase (of beats_per_measure) with the strongest low-band hits.
+    # Downbeat: harmony and timbre change most across bar lines, so pick the beat
+    # phase whose boundaries show the largest chroma/MFCC novelty.
     measure_frames = period * beats_per_measure
-    best_db, best_s = 0, -1.0
-    for k in range(beats_per_measure):
-        s = _comb_score(bands["low"], measure_frames, phase + k * period) + 0.5 * _comb_score(env_all, measure_frames, phase + k * period)
-        if s > best_s:
-            best_db, best_s = k, s
+    chroma = librosa.feature.chroma_stft(S=S**2, sr=sr, hop_length=HOP)
+    mfcc = librosa.feature.mfcc(S=librosa.power_to_db(librosa.feature.melspectrogram(S=S**2, sr=sr)), n_mfcc=13)
+    best_db = _downbeat_phase([chroma, mfcc], phase, period, beats_per_measure)
     first_downbeat = (phase + best_db * period) % measure_frames
     offset_sec = (first_downbeat / fps + LATENCY_SEC) % (period * beats_per_measure / fps)
     beat_sec = 60.0 / bpm
@@ -205,8 +220,6 @@ def analyze(path: str | Path, beats_per_measure: int = 4) -> dict:
     n_measures = int(np.ceil((duration - offset_sec) / measure_sec))
 
     rms = librosa.feature.rms(y=y, hop_length=HOP)[0]
-    chroma = librosa.feature.chroma_stft(S=S**2, sr=sr, hop_length=HOP)
-    mfcc = librosa.feature.mfcc(S=librosa.power_to_db(librosa.feature.melspectrogram(S=S**2, sr=sr)), n_mfcc=13)
 
     peaks = {}
     for name, e in list(bands.items()) + [("all", env_all)]:

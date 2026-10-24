@@ -33,7 +33,7 @@ def circ_err(x: float, period: float) -> float:
 
 def main() -> None:
     dirs = [Path(d) for d in sys.argv[1:]] or sorted(p.parent for p in CORPUS.glob("*/*/*.ogg"))
-    ok_bpm = ok_phase = 0
+    ok_bpm = ok_phase = ok_bar = 0
     for d in dirs:
         ksh = sorted(d.glob("*.ksh"))[0]
         h = header(ksh)
@@ -50,10 +50,11 @@ def main() -> None:
         p_ok = b_ok and pe <= 15
         ok_bpm += b_ok
         ok_phase += p_ok
+        ok_bar += p_ok and me <= 15
         print(f"{d.name:<26} gt {gt_bpm:>6g}  est {bpm:>7g} {'OK' if b_ok else 'NG'}  "
               f"off {a['offset_ms']:>5}  beat-phase err {pe:5.1f}ms {'OK' if p_ok else 'NG'}  "
               f"bar-phase err {me:6.1f}ms  cands {a['tempo']['candidates'][:3]}  {time.time() - t0:.1f}s")
-    print(f"BPM {ok_bpm}/{len(dirs)}  beat phase {ok_phase}/{len(dirs)}")
+    print(f"BPM {ok_bpm}/{len(dirs)}  beat phase {ok_phase}/{len(dirs)}  bar phase {ok_bar}/{len(dirs)}")
 
 
 if __name__ == "__main__":

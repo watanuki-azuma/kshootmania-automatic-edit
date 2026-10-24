@@ -243,16 +243,17 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
                 or (len(values) == 5 and values[4] != "mirror")):
             raise ValueError("Expected copy SOURCE -> DEST [mirror]")
         source, dest = values[1], values[3]
-        match = re.fullmatch(r"m(\d+)-(\d+)", source)
+        match = re.fullmatch(r"m(\d+)(?:-(\d+))?", source)
         if match:
-            first, last = map(int, match.groups())
+            first = int(match[1])
+            last = int(match[2]) if match[2] is not None else first
             if last < first:
                 raise ValueError("Copy range must have positive length")
             start, end = _rounded(_start(first, sigs)), _rounded(_start(last + 1, sigs))
         else:
             match = re.fullmatch(r"(m\d+:.+)-(m\d+:.+)", source)
             if not match:
-                raise ValueError("Expected copy range mN-M or mN:BEAT-mM:BEAT")
+                raise ValueError("Expected copy range mN, mN-M or mN:BEAT-mM:BEAT")
             start, end = position(match[1], 0), position(match[2], 0)
         match = re.fullmatch(r"m(\d+)(?::(.+))?", dest)
         if not match:
