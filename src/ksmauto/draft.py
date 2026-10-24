@@ -359,7 +359,7 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
                 continue
             y = position(first, measure)
             if len(tokens) == 3 and values[1] == "laser_effect":
-                laser_events.append([y, values[2], line, tokens[2][1]])
+                laser_events.append([y, "" if values[2] == "-" else values[2], line, tokens[2][1]])
                 continue
             if len(tokens) >= 2 and values[1] == "fx_effect":
                 if len(tokens) != 3 or not values[2].startswith(("L@", "R@")):
@@ -466,10 +466,11 @@ def _apply_effects(chart, notes, defs, fx_tags, fx_switches, laser_events, error
     base chart's definitions and events (param_change and other keys are kept)."""
     audio = chart.get("audio", {})
     effect = audio.get("audio_effect", {})
-    if not (defs["fx"] or defs["laser"] or fx_tags or fx_switches or laser_events or effect.get("fx", {}).get("long_event")
-            or effect.get("laser", {}).get("pulse_event") or audio.get("key_sound", {}).get("fx")):
+    if not (defs["fx"] or defs["laser"] or fx_tags or fx_switches or laser_events
+            or any(effect.get(kind, {}).get(key) for kind in ("fx", "laser") for key in ("def", "long_event", "pulse_event"))
+            or audio.get("key_sound", {}).get("fx")):
         return
-    known = {"fx": _FX_EFFECTS | {"", *(d[0] for d in defs["fx"])}, "laser": _LASER_EFFECTS | {d[0] for d in defs["laser"]}}
+    known = {"fx": _FX_EFFECTS | {"", *(d[0] for d in defs["fx"])}, "laser": _LASER_EFFECTS | {"", *(d[0] for d in defs["laser"])}}
     long_event, chip_event = {}, {}
     for y, lane, name, params, line, col in fx_switches:
         if not any(isinstance(n, list) and n[0] < y < n[0] + n[1] for n in notes["fx"][lane]):
@@ -607,7 +608,7 @@ def decompile(chart: dict) -> tuple[str, list[str]]:
     for name, ys in effect.get("laser", {}).get("pulse_event", {}).items():
         for y in ys:
             m, b = _locate(y, sigs)
-            rows(m).append((b, 4, f"{_format_beat(b)} laser_effect {name}"))
+            rows(m).append((b, 4, f"{_format_beat(b)} laser_effect {name or '-'}"))
     for kind in ("fx", "laser"):
         for key in effect.get(kind, {}).keys() - {"def", "long_event", "pulse_event"}:
             if effect[kind][key] or key != "param_change":

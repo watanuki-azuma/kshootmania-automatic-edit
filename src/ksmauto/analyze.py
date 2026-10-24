@@ -90,7 +90,8 @@ def _top_note(rise: np.ndarray, frame: int) -> int:
     for h, weight in ((2, 0.5), (3, 0.33), (4, 0.25)):
         k = int(round(12 * np.log2(h)))
         s[:-k] += weight * w[k:]
-    peaks = (s >= 0.6 * s.max()) & (s >= np.roll(s, 1)) & (s >= np.roll(s, -1))
+    edged = np.pad(s, 1, constant_values=-np.inf)
+    peaks = (s >= 0.6 * s.max()) & (s >= edged[:-2]) & (s >= edged[2:])
     return int(np.flatnonzero(peaks)[-1])
 
 

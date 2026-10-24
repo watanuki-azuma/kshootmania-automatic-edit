@@ -125,3 +125,11 @@ def test_stem_cells_short_stem_and_triplet_rows():
     span = _span_row("." * 12, [[0.25, 0.25]], 4, 3)
     pitch = _pitch_row([[0.25, 69.0]], 4, 3, 60.0, 72.0)
     assert [c == "=" for c in span] == [c != "." for c in pitch]
+
+
+def test_top_note_does_not_wrap_around_the_range():
+    from ksmauto.analyze import _top_note
+
+    rise = np.zeros((72, 12))
+    rise[0], rise[71] = 1.0, 0.9
+    assert _top_note(rise, 0) == 71

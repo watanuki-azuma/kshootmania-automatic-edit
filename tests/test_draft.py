@@ -467,3 +467,12 @@ def test_fx_effects_key_sounds_and_laser_filters():
 def test_effect_errors(body, message):
     _, errors = compile_draft(f"title: T\nbpm: 120\n@m0\n{body}")
     assert any(message in e.message for e in errors), errors
+
+
+def test_laser_no_effect_and_base_definitions_are_replaced():
+    chart = compile_ok("def fx custom gate wave_length=1/16\n@m0\n1 laser_effect -")
+    assert chart["audio"]["audio_effect"]["laser"]["pulse_event"] == {"": [240]}
+    text, _ = decompile(chart)
+    assert "1 laser_effect -" in text and compile_draft(text)[0]["audio"] == chart["audio"]
+    rebuilt, errors = compile_draft("title: T\nbpm: 120\n@m0\n0 A", base=chart)
+    assert not errors and "audio_effect" not in rebuilt.get("audio", {})
