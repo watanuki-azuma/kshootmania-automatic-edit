@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from ksmauto.ksh import load_ksh
-from ksmauto.lint import FEATURES, stats
+from ksmauto.lint import FEATURES, level_features, stats
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "out" / "sdvxin_stats.jsonl"
@@ -42,7 +42,7 @@ def main() -> None:
     counts = defaultdict(int)
     for src, *_ in rows:
         counts[src] += 1
-    X = np.array([[s[k] for k in FEATURES] + [1.0] for *_, s in rows])
+    X = np.array([[level_features(s)[k] for k in FEATURES] + [1.0] for *_, s in rows])
     y = np.array([lvl for _, _, lvl, _ in rows])
     w = np.sqrt(np.array([len(rows) / (len(counts) * counts[src]) for src, *_ in rows]))
     coef, *_ = np.linalg.lstsq(X * w[:, None], y * w, rcond=None)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -254,11 +256,20 @@ def _bpm_at(chart, y):
     return bpm
 
 
-# Least-squares fit on the 36 official corpus charts (tests/eval/fit_level.py), MAE ~1 level.
-LEVEL_COEF = {"avg_nps": 1.651, "peak_nps": 0.104, "laser_ratio": 6.079, "bias": 1.219}
+# Weighted least-squares fit (tests/eval/fit_level.py) on the 36 official charts
+# (levels 1-16) and ~870 local sdvx.in charts (17-20): MAE ~0.7 / ~0.9 levels.
+LEVEL_COEF = {"log_avg_nps": 3.913, "log_peak_nps": 1.777, "laser_ratio": 2.373,
+              "stream16_max_sec": 0.264, "knob_button_ratio": 6.161, "bias": 1.224}
 FEATURES = tuple(k for k in LEVEL_COEF if k != "bias")
 
 
+def level_features(s: dict) -> dict:
+    """Stats as seen by the level model (density enters on a log scale)."""
+    return {**s, "log_avg_nps": math.log(max(s["avg_nps"], 0.1)),
+            "log_peak_nps": math.log(max(s["peak_nps"], 0.5))}
+
+
 def estimate_level(s: dict) -> float:
-    v = LEVEL_COEF["bias"] + sum(LEVEL_COEF[k] * s[k] for k in FEATURES)
+    f = level_features(s)
+    v = LEVEL_COEF["bias"] + sum(LEVEL_COEF[k] * f[k] for k in FEATURES)
     return round(min(20.0, max(1.0, v)), 1)

@@ -85,7 +85,10 @@ uv run ksmauto decompile OLD.ksh -o work/old.ksmd      # 読みやすい DSL に
 uv run ksmauto compile work/old.ksmd --base OLD.ksh -o work/fixed.kson
 ```
 
-参考にしたい譜面があるときは、`corpus/official/` の公式譜面を decompile して同じレベル帯の配置を読む。
+参考にしたい譜面があるときは、同じレベル帯の譜面を decompile して配置を読む（どちらも手元専用。中身をリポジトリや成果物に写さない）:
+
+- Lv16 以下: `corpus/official/` の公式譜面（`.ksh`）
+- Lv17〜20: `corpus/sdvxin_full/<フォルダ>/<キー>/`（`meta.json` に曲名・レベル）。`uv run ksmauto sdvxin DIR -o work/ref.kson` で KSON に復元してから decompile する。オフセットは無いので配置の読み取り専用
 
 ## 参照
 
