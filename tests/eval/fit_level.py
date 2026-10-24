@@ -1,33 +1,61 @@
-"""Fit ksmauto.lint.LEVEL_COEF on the official corpus (prints coefficients and errors).
+"""Fit ksmauto.lint.LEVEL_COEF (prints coefficients and errors).
+
+Uses the official KSM charts (levels 1-16) and, when present, the local sdvx.in
+statistics cache written by tests/eval/sdvxin_stats.py (levels 17-20). The two
+sources are weighted so that each contributes equally to the fit.
 
 Usage: uv run python tests/eval/fit_level.py
 """
 
+import json
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
 from ksmauto.ksh import load_ksh
-from ksmauto.lint import stats
+from ksmauto.lint import FEATURES, stats
 
-FEATURES = ("avg_nps", "peak_nps", "laser_ratio")
 ROOT = Path(__file__).resolve().parents[2]
+CACHE = ROOT / "out" / "sdvxin_stats.jsonl"
+
+
+def load():
+    rows = []
+    for p in sorted((ROOT / "corpus" / "official").rglob("*.ksh")):
+        c = load_ksh(p)
+        rows.append(("official", p.name, float(c["meta"]["level"]), stats(c)))
+    if CACHE.exists():
+        for line in CACHE.read_text(encoding="utf-8").splitlines():
+            r = json.loads(line)
+            if "error" in r:
+                continue
+            # Skip charts whose chip count says the image decode went wrong.
+            if abs(r["decoded"]["chip"] - r["official"]["chip"]) > max(3, 0.005 * r["official"]["chip"]):
+                continue
+            rows.append(("sdvxin", r["key"], r["level"], r["stats"]))
+    return rows
 
 
 def main() -> None:
-    rows, levels, names = [], [], []
-    for p in sorted((ROOT / "corpus" / "official").rglob("*.ksh")):
-        c = load_ksh(p)
-        s = stats(c)
-        rows.append([s[k] for k in FEATURES] + [1.0])
-        levels.append(c["meta"]["level"])
-        names.append(p.name)
-    X, y = np.array(rows), np.array(levels, dtype=float)
-    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
-    pred = X @ coef
-    for n, a, b in zip(names, y, pred):
-        print(f"{n:<36} level {a:>4.0f}  est {b:5.1f}")
-    print("MAE", round(float(np.abs(pred - y).mean()), 2))
+    rows = load()
+    counts = defaultdict(int)
+    for src, *_ in rows:
+        counts[src] += 1
+    X = np.array([[s[k] for k in FEATURES] + [1.0] for *_, s in rows])
+    y = np.array([lvl for _, _, lvl, _ in rows])
+    w = np.sqrt(np.array([len(rows) / (len(counts) * counts[src]) for src, *_ in rows]))
+    coef, *_ = np.linalg.lstsq(X * w[:, None], y * w, rcond=None)
+    pred = np.clip(X @ coef, 1, 20)
+    for src in counts:
+        m = np.array([r[0] == src for r in rows])
+        print(f"{src}: n={m.sum()} MAE={np.abs(pred[m] - y[m]).mean():.2f}")
+    by_level = defaultdict(list)
+    for (src, _, lvl, _), p in zip(rows, pred):
+        by_level[int(lvl)].append(p - lvl)
+    for lvl in sorted(by_level):
+        e = np.array(by_level[lvl])
+        print(f"  level {lvl:>2}: n={len(e):>3} bias={e.mean():+.2f} MAE={np.abs(e).mean():.2f}")
     print({k: round(float(v), 3) for k, v in zip(FEATURES + ("bias",), coef)})
 
 

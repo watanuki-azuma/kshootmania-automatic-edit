@@ -256,8 +256,9 @@ def _bpm_at(chart, y):
 
 # Least-squares fit on the 36 official corpus charts (tests/eval/fit_level.py), MAE ~1 level.
 LEVEL_COEF = {"avg_nps": 1.651, "peak_nps": 0.104, "laser_ratio": 6.079, "bias": 1.219}
+FEATURES = tuple(k for k in LEVEL_COEF if k != "bias")
 
 
 def estimate_level(s: dict) -> float:
-    v = LEVEL_COEF["bias"] + sum(LEVEL_COEF[k] * s[k] for k in ("avg_nps", "peak_nps", "laser_ratio"))
+    v = LEVEL_COEF["bias"] + sum(LEVEL_COEF[k] * s[k] for k in FEATURES)
     return round(min(20.0, max(1.0, v)), 1)
