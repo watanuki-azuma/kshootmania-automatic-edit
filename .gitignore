@@ -6,6 +6,6 @@ dist/
 build/
 *.egg-info/
 # Downloaded charts/audio (not redistributed)
-corpus/
+/corpus
 # Generated outputs
 out/
