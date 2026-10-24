@@ -33,7 +33,7 @@ uv run pytest
 | `ksmauto render FILE --measures 16-47 -o page.png` | 譜面を PNG に描画 |
 | `ksmauto validate FILE` / `ksmauto info FILE` | KSON 構造検証 / 概要 |
 | `ksmauto edit chart.kson --audio SONG.ogg` | ブラウザで同期再生・手修正 |
-| `ksmauto preview FILE [--audio SONG] -o preview.html` | 譜面と音源を埋め込んだ単体 HTML ビューア（サーバー不要。共有用）。KSM v2 に基づくカメラ・スクロールと 2D/3D 表示、FX・レーザーの音声エフェクトと FX キー音の近似再生 |
+| `ksmauto preview FILE [--audio SONG] -o preview.html` | 譜面と音源を埋め込んだ単体 HTML ビューア（サーバー不要。共有用）。KSM v2 に基づくカメラ・スクロールと 2D/3D 表示、FX・レーザーの音声エフェクトと FX キー音の近似再生。直角音は既定オン（合成音、up/down/swing/mute・音量変化・幅による自動音量に対応） |
 | `ksmauto viewer -o viewer.html` | 譜面を含まない単体 HTML ビューア。KSON / KSH と音源をファイル選択・ドロップで開き、再読み込みせずに切替。フォルダー内の音源は BGM ファイル名で照合（音源が 1 件ならそれを使用）。外部通信不要 |
 | `ksmauto sdvxin DIR [-o x.kson]` / `ksmauto sdvxin --report ROOT` | 手元に取得した sdvx.in 譜面（JSON / 画像レイヤー）を KSON に復元 / 公表ノーツ数と照合 |
 

@@ -78,8 +78,20 @@ Both 2D and 3D use the same highway drawing and account for `beat.scroll_speed`
 the specified pulse interval; audio and camera time continue. The seek bar is in
 measures. Play/pause, 0.5/0.75/1× playback, hi-speed and effects remain available.
 FX/laser audio effects and built-in FX key sounds use the existing approximate
-synthesis, independently of scroll. Backgrounds, layers, movies, original skin
-assets, judging, scoring and gameplay input are not reproduced. Custom sound files
+synthesis, independently of scroll. The default-on 「直角音」 checkbox plays laser
+slam sounds even without BGM. A short band-pass noise burst and pitched click
+approximate the default hit and the up/down/swing variants; mute is silent. The
+viewer follows KSM v2's note-time playback: `audio.key_sound.laser.vol` changes
+apply at the slam pulse (default 0.5), and `legacy.vol_auto` scales volume by
+`min(1, abs(vf - v) * section_width * 2)`. Simultaneous slams use the louder lane.
+Only events at actual slam pulses apply. Both KSON `slam_up`/`slam_down`/
+`slam_swing`/`slam_mute` and the KSH converter's `up`/`down`/`swing`/`mute` names
+are recognized; KSH `chokkakuvol` and `chokkakuautovol` are preserved. Sounds share
+the FX key sound output level, independently of BGM's `vol`, and follow the audio
+clock through speed changes and seeking. KSM's sound assets are not bundled or
+used; unsupported custom slam sounds fall back to the default hit.
+Backgrounds, layers, movies, original skin assets, judging, scoring and gameplay
+input are not reproduced. Custom sound files
 and `switch_audio` are not synthesized.
 
 Keep one editing tab per server session; saving from multiple tabs uses the last
@@ -93,7 +105,8 @@ in memory without sockets. A completed browser smoke test writes
 `out/editor-preview.png`.
 
 `uv run pytest tests/test_preview.py` also checks the standalone CLI, compares the
-browser KSH converter with the Python importer, runs Node camera/scroll tests,
-and exercises file loading and playback with Playwright. The local corpus is
+browser KSH converter with the Python importer, runs Node camera/scroll and slam
+sound event/scheduling tests, and exercises file loading and playback with
+Playwright. The local corpus is
 optional. Browser checks skip when Chromium is absent or the sandbox forbids
 launching it. A successful smoke test writes `out/viewer-preview.png`.

@@ -147,3 +147,26 @@ def test_browser_ksh_converter_options(tmp_path):
             path.write_text(text, encoding="utf-8")
             paths.append(path)
     _compare_ksh(paths)
+
+
+@pytest.mark.parametrize("auto,expected", [("", True), ("0", False), ("1", True)])
+def test_browser_ksh_converter_slam_sounds(tmp_path, auto, expected):
+    header = "title=Slam sounds\nt=120\nchokkakuvol=25\n"
+    if auto:
+        header += f"chokkakuautovol={auto}\n"
+    rows = []
+    names = ["up", "down", "swing", "mute", "custom.wav"]
+    for i, name in enumerate(names):
+        rows.extend([f"chokkakuse={name}", "0000|00|0-", "0000|00|o-", "0000|00|--"])
+        if i == 0:
+            rows.append("chokkakuvol=0")
+        elif i == 1:
+            rows.append("chokkakuvol=80")
+    rows.extend(["0000|00|--"] * 17)  # 32 rows per measure: each pair is a slam
+    path = tmp_path / "slams.ksh"
+    path.write_text(header + "--\n" + "\n".join(rows) + "\n--\n", encoding="utf-8")
+    assert load_ksh(path)["audio"]["key_sound"]["laser"] == {
+        "legacy": {"vol_auto": expected}, "vol": [[0, 0.25], [90, 0], [180, 0.8]],
+        "slam_event": {name: [i * 90] for i, name in enumerate(names)},
+    }
+    _compare_ksh([path])

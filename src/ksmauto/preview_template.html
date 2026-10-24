@@ -80,6 +80,7 @@ input[type=range] { accent-color: var(--accent); }
       <label>HI-SPEED <input id="hispeed" type="range" min="3" max="12" step="0.5" value="6.5"></label>
       <label>速度 <select id="rate"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1.0×</option></select></label>
       <label><input id="assist" type="checkbox"> アシスト音</label>
+      <label title="レーザー直角のキー音（合成音）"><input id="slam" type="checkbox" checked> 直角音</label>
       <label title="FX ロング・レーザーのエフェクトと FX のキー音（全部押した場合の近似）"><input id="effects" type="checkbox"> エフェクト</label>
       <label>表示タイミング <input id="vis" type="range" min="-200" max="200" step="5" value="0"> <output id="vis-out">0ms</output></label>
       <span id="latency"></span>
@@ -550,7 +551,7 @@ function scrollMap(beat) {
     else ranges.push([y, y + len]);
   }
   for (const [a, b] of ranges) {
-    const va = graphAt(graph, a), vb = graphAt(graph, b);
+    const va = graphAt(graph, a, 1, true), vb = graphAt(graph, b);   // the speed coming into the stop
     graph = [...graph.filter(p => p[0] < a || p[0] > b), [a, [va, 0]], [b, [0, vb]]].sort((a, b) => a[0] - b[0]);
   }
   const sums = [0];
@@ -650,6 +651,24 @@ function slamShake(slams, patterns, t) {
   const r = (t - s.t) / 0.15;
   return Math.sin(Math.PI * r) * (1 - r) ** 2 * s.d * (17 * 50 / 150 / 2);
 }
+// after kshootmania/src/MusicGame/Audio/LaserSlamSE.cpp (ksm-v2, MIT), in note-time/autoplay mode.
+function laserSlamEvents(chart, pulseToSec) {
+  const info = chart.audio?.key_sound?.laser || {}, widths = new Map();
+  for (const lane of chart.note?.laser || []) for (const [start, points, width = 1] of lane) for (const [ry, v] of points) {
+    const [a, b] = graphPair(v); if (a === b) continue;
+    const y = start + ry, scale = info.legacy?.vol_auto ? clamp(Math.abs(b - a) * width * 2, 0, 1) : 1;
+    // Simultaneous slams use the louder lane, rather than doubling the sound.
+    widths.set(y, Math.max(widths.get(y) ?? 0, scale));
+  }
+  const volumes = info.vol || [], variants = ['slam_up', 'slam_down', 'slam_swing', 'slam_mute'];
+  return [...widths].sort((a, b) => a[0] - b[0]).map(([y, scale]) => {
+    const key = Object.entries(info.slam_event || {}).find(([, ys]) => ys.includes(y))?.[0];
+    // The KSH converters (and older libkson charts) retain up/down/swing/mute.
+    const name = variants.includes(key) ? key : variants.includes('slam_' + key) ? 'slam_' + key : 'slam';
+    const vol = volumes[pointIndex(volumes, y)]?.[1] ?? 0.5;
+    return {y, t: pulseToSec(y), name, vol: vol * scale};
+  });
+}
 // after kshootmania/src/MusicGame/Graphics/Highway/Highway3DGraphics.cpp (ksm-v2, MIT).
 function highwayCorners(cam) {
   const w = 304 * 2 / 13, h = 936 * 13 / 20, below = h * 14 / 1024, above = h - below;
@@ -727,7 +746,8 @@ async function openFiles(files) {
     const filename = (chart.audio?.bgm?.filename || '').replaceAll('\\', '/').toLowerCase();
     const relative = normalPath(chartPath.slice(0, chartPath.lastIndexOf('/') + 1) + filename);
     const candidates = [...audioFiles.values()];
-    const matched = audioFiles.get(relative) || audioFiles.get(filename) || candidates.find(f => filePath(f).endsWith('/' + filename) || f.name.toLowerCase() === filename);
+    const matched = audioFiles.get(relative) || audioFiles.get(filename) || candidates.find(f => filePath(f).endsWith('/' + filename) || f.name.toLowerCase() === filename)
+      || candidates.find(f => f.name.toLowerCase() === filename.slice(filename.lastIndexOf('/') + 1));   // picked files have no folder
     const selected = matched || (candidates.length === 1 ? candidates[0] : null);
     const src = selected ? URL.createObjectURL(selected) : chart === embedded ? AUDIO_SRC : '';
     const oldURL = audioURL; audioURL = selected ? src : null;
@@ -800,7 +820,7 @@ $('title').textContent = meta.title || 'Untitled'; $('artist').textContent = met
 const DIFF = ['LIGHT', 'CHALLENGE', 'EXHAUST', 'INFINITE'];
 $('diffname').textContent = typeof meta.difficulty === 'number' ? DIFF[meta.difficulty] || '' : (meta.difficulty || '');
 $('level').textContent = meta.level ?? '';
-$('srcnote').textContent = `${meta.chart_author ? '譜面: ' + meta.chart_author + ' · ' : ''}ノーツ ${notes.length} · 直角 ${lasers.reduce((n, l) => n + l.pts.filter(q => q.a !== q.b).length, 0)}` + (hasAudio ? '' : ' · 音源なし（無音で再生）');
+$('srcnote').textContent = `${meta.chart_author ? '譜面: ' + meta.chart_author + ' · ' : ''}ノーツ ${notes.length} · 直角 ${lasers.reduce((n, l) => n + l.pts.filter(q => q.a !== q.b).length, 0)}` + (hasAudio ? '' : ' · 音源なし');
 
 // ---- clock. audio.currentTime is the master but updates in coarse steps, so a
 // performance.now() estimate runs between them and resyncs on drift. What is on
@@ -825,11 +845,12 @@ async function play() {
   starting = true; measureLatency();
   await ensureEffects();
   if (disposed || !starting) return;
-  starting = false; playing = true; anchorAt = 0; scheduled = chartTime;
+  starting = false; playing = true; anchorAt = 0; scheduled = chartTime - 1e-9;
   virtualStart = chartTime; virtualAt = performance.now(); preRoll = hasAudio && chartTime + offset < 0;
   $('overlay').hidden = true; $('play').textContent = '❚❚ PAUSE';
   if (hasAudio && !preRoll) await startAudio(chartTime);
   ensureSound();
+  if (playing && !disposed) scheduleSounds();
 }
 async function startAudio(t) {
   audio.playbackRate = rate; audio.currentTime = Math.max(0, t + offset); anchorAt = 0;
@@ -866,8 +887,10 @@ const soundSources = new Set();
 function trackSound(s) { soundSources.add(s); s.onended = () => soundSources.delete(s); return s; }
 function resetSounds() { for (const s of soundSources) { try { s.stop(); } catch (e) {} } soundSources.clear(); }
 let ctx = null, lastTick = -1, scheduled = -1;
-function ensureSound() { if (!$('assist').checked) return; ctx ||= new AudioContext(); ctx.resume(); }
-$('assist').onchange = () => { ensureSound(); scheduled = audioNow(); };
+function ensureSound() { if (!$('assist').checked && !$('slam').checked) return; ctx ||= new AudioContext(); ctx.resume(); }
+$('assist').onchange = ensureSound;
+let slamGain = null;
+$('slam').onchange = () => { ensureSound(); if (slamGain) slamGain.gain.setValueAtTime($('slam').checked ? 1 : 0, ctx.currentTime); };
 $('vis').value = userOffset; $('vis-out').textContent = `${userOffset > 0 ? '+' : ''}${userOffset}ms`;
 $('vis').oninput = e => {
   userOffset = +e.target.value; $('vis-out').textContent = `${userOffset > 0 ? '+' : ''}${userOffset}ms`;
@@ -960,6 +983,7 @@ for (const [name, lanes] of Object.entries(chart.audio?.key_sound?.fx?.chip_even
   const [y, o] = Array.isArray(e) ? e : [e, {}]; keySounds.push({t: pulseToSec(y), name, vol: o?.vol ?? 1});
 }
 keySounds.sort((a, b) => a.t - b.t);
+const slamSounds = laserSlamEvents(chart, pulseToSec);
 const measureStarts = []; for (let m = 0; measureStarts.length < 5000; m++) { const s = pulseToSec(measureToPulse(m)); measureStarts.push([s]); if (s > lastSec) break; }
 let fxNode = null, fxLoading = null;
 $('effects').checked = hasAudio; $('effects').disabled = !hasAudio;
@@ -984,9 +1008,30 @@ function ensureEffects() {
 }
 $('effects').onchange = () => { if (playing) ensureEffects(); };
 let noise = null;
+function ensureNoise() {
+  noise ||= (() => { const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; })();
+}
+function slamSound(name, vol, delay) {
+  if (!ctx || name === 'slam_mute' || vol <= 0) return;
+  ensureNoise();
+  if (!slamGain) { slamGain = ctx.createGain(); slamGain.gain.value = $('slam').checked ? 1 : 0; slamGain.connect(ctx.destination); }
+  const t = ctx.currentTime + Math.max(0, delay), out = ctx.createGain(); out.gain.value = vol * 0.6; out.connect(slamGain);
+  const [f0, f1, len] = name === 'slam_up' ? [2200, 6500, 0.09] : name === 'slam_down' ? [6500, 1200, 0.1] : name === 'slam_swing' ? [1800, 2200, 0.11] : [4500, 1800, 0.08];
+  const s = trackSound(ctx.createBufferSource()), f = ctx.createBiquadFilter(), g = ctx.createGain();
+  s.buffer = noise; f.type = 'bandpass'; f.Q.value = 1.2;
+  f.frequency.setValueAtTime(f0, t);
+  if (name === 'slam_swing') f.frequency.exponentialRampToValueAtTime(6000, t + len / 2);
+  f.frequency.exponentialRampToValueAtTime(f1, t + len);
+  g.gain.setValueAtTime(0.001, t); g.gain.linearRampToValueAtTime(1, t + 0.001); g.gain.exponentialRampToValueAtTime(0.001, t + len);
+  s.connect(f).connect(g).connect(out); s.start(t, Math.random() * 0.5); s.stop(t + len);
+  const o = trackSound(ctx.createOscillator()), click = ctx.createGain(); o.type = 'triangle';
+  o.frequency.setValueAtTime(f0 * 0.6, t); o.frequency.exponentialRampToValueAtTime(f1 * 0.4, t + 0.025);
+  click.gain.setValueAtTime(0.5, t); click.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
+  o.connect(click).connect(out); o.start(t); o.stop(t + 0.03);
+}
 function keySound(name, vol, delay) {
   if (!ctx || !/^(clap|snare)/.test(name)) return;   // sound files next to the chart are not available here
-  noise ||= (() => { const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; })();
+  ensureNoise();
   const t = ctx.currentTime + Math.max(0, delay), out = ctx.createGain(); out.gain.value = vol * 0.6; out.connect(ctx.destination);
   const burst = (at, len, freq, q, level) => {
     const s = trackSound(ctx.createBufferSource()), f = ctx.createBiquadFilter(), g = ctx.createGain();
@@ -1005,6 +1050,14 @@ function keySound(name, vol, delay) {
     g.gain.setValueAtTime(0.8, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
     o.connect(g).connect(out); o.start(t); o.stop(t + 0.1);
   }
+}
+function scheduleSounds() {
+  if (!ctx) return;
+  const a = audioNow(), until = a + 0.1 * rate;
+  if ($('assist').checked) for (const n of notes) if (n.t0 > scheduled && n.t0 <= until) tick(n.kind === 'fx', (n.t0 - a) / rate);
+  if ($('effects').checked) for (const k of keySounds) if (k.t > scheduled && k.t <= until) keySound(k.name, k.vol, (k.t - a) / rate);
+  if ($('slam').checked) for (const s of slamSounds) if (s.t > scheduled && s.t <= until) slamSound(s.name, s.vol, (s.t - a) / rate);
+  scheduled = Math.max(scheduled, until);
 }
 
 // ---- drawing
@@ -1039,12 +1092,7 @@ function afterDraw(t) {
   if (playing) {
     for (const n of notes) if (n.t0 > lastTick && n.t0 <= t) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = 1;
     // Ticks follow the sound clock (they share its output latency), scheduled slightly ahead.
-    if (ctx) {
-      const a = audioNow(), until = a + 0.1 * rate;
-      if ($('assist').checked) for (const n of notes) if (n.t0 > scheduled && n.t0 <= until) tick(n.kind === 'fx', (n.t0 - a) / rate);
-      if ($('effects').checked) for (const k of keySounds) if (k.t > scheduled && k.t <= until) keySound(k.name, k.vol, (k.t - a) / rate);
-      scheduled = until;
-    }
+    scheduleSounds();
     for (const n of notes) if (n.long && n.t0 <= t && t <= n.t1) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = Math.max(flash[n.kind === 'bt' ? n.lane : 4 + n.lane], 0.6);
     lastTick = t;
   }

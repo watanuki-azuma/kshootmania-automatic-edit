@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const html = fs.readFileSync(new URL('../src/ksmauto/preview_template.html', import.meta.url), 'utf8');
-const core = vm.runInNewContext(html.match(/<script id="viewer-core">([\s\S]*?)<\/script>/)[1] + '\n({curveAt, graphAt, tiltAt, newTilt, stepTilt, patternAt, slamShake, highwayCorners, scrollMap, expandGraph, laserValueAt, effectiveStdBpm})');
+const core = vm.runInNewContext(html.match(/<script id="viewer-core">([\s\S]*?)<\/script>/)[1] + '\n({curveAt, graphAt, tiltAt, newTilt, stepTilt, patternAt, slamShake, highwayCorners, scrollMap, expandGraph, laserValueAt, effectiveStdBpm, laserSlamEvents})');
 const close = (a, b, eps = 1e-8) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 const laser = (side, points) => ({side, graph: points, pts: points.map(([y, v]) => ({y, a: Array.isArray(v) ? v[0] : v, b: Array.isArray(v) ? v[1] : v}))});
 
@@ -65,11 +65,46 @@ test('spin, half spin and swing match KSM formulas and require matching slam dir
   close(core.slamShake(slams, {}, 0.15), 0);
 });
 
+test('slam sounds come only from immediate laser changes, with pulse-specific variants and default volume', () => {
+  const chart = {note:{laser:[[[120, [[0,[0,1]], [60,0.5], [120,[1,0]], [240,[0,0.5]], [360,[0.5,1]], [480,[1,0]], [600,[0,0]]]]], []]},
+    audio:{key_sound:{laser:{slam_event:{slam_up:[0,180,240], slam_down:[360], slam_swing:[480], slam_mute:[600]}}}}};
+  const events = core.laserSlamEvents(chart, y => y / 480);
+  assert.deepEqual(Array.from(events, e => [e.y,e.t,e.name,e.vol]), [
+    [120,0.25,'slam',0.5], [240,0.5,'slam_up',0.5], [360,0.75,'slam_down',0.5],
+    [480,1,'slam_swing',0.5], [600,1.25,'slam_mute',0.5],
+  ]);
+  chart.audio.key_sound.laser.slam_event = {up:[120], down:[240], swing:[360], mute:[480], 'custom.wav':[600]};
+  assert.deepEqual(Array.from(core.laserSlamEvents(chart, y => y), e => e.name), ['slam_up','slam_down','slam_swing','slam_mute','slam']);
+  assert.equal(core.laserSlamEvents({}, y => y).length, 0);
+});
+
+test('slam volume is a step at the note pulse; legacy auto volume uses section width, capped at one', () => {
+  const chart = {note:{laser:[[[0,[[0,[0,0.125]], [120,[0.5,0.25]], [240,[0,0.75]], [360,[1,0.875]]]],
+    [480,[[0,[0,0.125]], [120,[0.5,0.25]]],2]], []]}, audio:{key_sound:{laser:{vol:[[120,0.8],[360,0],[480,0.6]]}}}};
+  const info = chart.audio.key_sound.laser;
+  const volumes = () => Array.from(core.laserSlamEvents(chart, y => y), e => e.vol);
+  assert.deepEqual(volumes(), [0.5,0.8,0.8,0,0.6,0.6]);
+  info.legacy = {vol_auto:true};
+  assert.deepEqual(volumes(), [0.125,0.4,0.8,0,0.3,0.6]);
+  info.vol = []; assert.deepEqual(volumes(), [0.125,0.25,0.5,0.125,0.25,0.5]);
+  info.legacy.vol_auto = false; assert.deepEqual(volumes(), [0.5,0.5,0.5,0.5,0.5,0.5]);
+});
+
+test('simultaneous slams play once at the larger width-scaled volume, in either lane order', () => {
+  const narrow = [[0,[[0,[0,0.125]], [120,[0,0.5]]]]], wide = [[0,[[0,[0,0.25]], [120,[0,0.5]]],2]];
+  for (const lanes of [[narrow,wide], [wide,narrow]]) {
+    const chart = {note:{laser:lanes}, audio:{key_sound:{laser:{legacy:{vol_auto:true}, vol:[[0,0.8]]}}}};
+    assert.deepEqual(Array.from(core.laserSlamEvents(chart, y => y), e => [e.y,e.vol]), [[0,0.8],[120,0.8]]);
+  }
+});
+
 test('scroll integrates immediate and curved speeds; stop ranges merge and override speed without changing time', () => {
   const s = core.scrollMap({scroll_speed: [[0, 1], [240, [1, 2]], [480, 2]], stop: [[60, 120], [120, 120]]});
   close(s.distance(0, 60), 60); close(s.distance(60, 240), 0);
   close(s.distance(240, 480), 480); close(s.distance(480, 240), -480);
   const reverse = core.scrollMap({scroll_speed: [[0, -1], [240, -1]]}); close(reverse.distance(0, 240), -240);
+  // A stop on a speed change keeps the speed before it.
+  close(core.scrollMap({scroll_speed: [[0, 1], [240, [1, 2]], [480, 2]], stop: [[240, 120]]}).distance(0, 240), 240);
   const curved = core.scrollMap({scroll_speed: [[0, 0, [0.5, 1]], [240, 1]]});
   const expanded = core.expandGraph([[0, 0, [0.5, 1]], [240, 1]]);
   assert.equal(expanded.length, 17);
@@ -88,14 +123,14 @@ test('highway neutral plane, modern 2400-unit turn and asymmetric bottom zoom', 
 
 function viewerPage(chart = null) {
   let ms = 0, serial = 0;
-  const frames = new Map(), elements = new Map(), audios = [], processors = [], uploads = [];
+  const frames = new Map(), elements = new Map(), audios = [], processors = [], uploads = [], sounds = [], gains = [];
   const drawing = new Proxy({createLinearGradient: () => ({addColorStop() {}})}, {get: (obj, key) => obj[key] ?? (() => {})});
   const gl = new Proxy({
     getExtension: () => null, getParameter: () => 8,
     bufferData: (target, values) => { assert.ok([...values].every(Number.isFinite), 'camera projection must stay finite'); uploads.push([...values]); },
   }, {get: (obj, key) => obj[key] ?? (() => ({}))});
   const element = id => {
-    if (!elements.has(id)) elements.set(id, {value: ({view:'3d',rate:'1',hispeed:'6.5',vis:'0',seek:'0'})[id] || '', checked:false,
+    if (!elements.has(id)) elements.set(id, {value: ({view:'3d',rate:'1',hispeed:'6.5',vis:'0',seek:'0'})[id] || '', checked:id === 'slam',
       style:{}, textContent:'', disabled:false, hidden:false, append() {}, replaceChildren() {},
       getContext: kind => kind === 'webgl' ? gl : drawing,
       getBoundingClientRect: () => ({width:560,height:680})});
@@ -110,9 +145,20 @@ function viewerPage(chart = null) {
     load() {} addEventListener() {} removeAttribute() {}
   }
   class AudioContext {
-    constructor() { this.currentTime = 0; this.audioWorklet = {addModule: async () => {}}; }
+    constructor() { this.sampleRate = 8000; this.audioWorklet = {addModule: async () => {}}; }
+    get currentTime() { return ms / 1000; }
     async resume() {} async close() { this.closed = true; }
     createMediaElementSource() { return {connect: n => ({connect() {}})}; }
+    createBuffer(ch, len) { return {getChannelData: () => new Float32Array(len)}; }
+    createGain() { const node = {connect() { return this; }, gain:{value:1, setValueAtTime(v) { this.value = v; }, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {}}}; gains.push(node); return node; }
+    createBiquadFilter() { return {connect() { return this; }, frequency:{setValueAtTime() {}, exponentialRampToValueAtTime() {}}, Q:{}}; }
+    sound(kind) {
+      const node = {kind, stops:[], connect() { return this; }, start(t) { this.at = t; }, stop(t) { this.stops.push(t); },
+        frequency:{setValueAtTime() {}, exponentialRampToValueAtTime() {}}};
+      sounds.push(node); return node;
+    }
+    createBufferSource() { return this.sound('noise'); }
+    createOscillator() { return this.sound('oscillator'); }
   }
   class AudioWorkletNode {
     constructor() { this.messages = []; this.port = {postMessage: m => this.messages.push(m)}; processors.push(this); }
@@ -128,12 +174,47 @@ function viewerPage(chart = null) {
   });
   for (const id of ['ksh-converter','viewer-core']) vm.runInContext(html.match(new RegExp(`<script id="${id}">([\\s\\S]*?)<\\/script>`))[1], context);
   vm.runInContext(html.match(/<script>\n([\s\S]*?)<\/script>/)[1].replace('__AUDIO_SRC__',''), context);
-  return {element, audios, processors, uploads, async open(files) { await vm.runInContext('queueFiles',context)(files); },
+  return {element, audios, processors, uploads, sounds, gains, async open(files) { await vm.runInContext('queueFiles',context)(files); },
     async frame(delta = 16) { ms += delta; const pending = [...frames.values()]; frames.clear(); for (const fn of pending) fn(); await Promise.resolve(); }};
 }
 const sample = () => ({format_version:1,meta:{title:'Test'},beat:{bpm:[[0,120]]},audio:{bgm:{filename:'song.wav'}},
   note:{bt:[[[0,960]],[],[],[]],fx:[[],[]],laser:[[[0,[[0,[0,1]],[960,0]]]],[]]},
   camera:{cam:{body:{zoom_top:[[0,100]],zoom_bottom:[[0,20]],rotation_deg:[[0,20]],center_split:[[0,50]]}}}});
+
+test('slam scheduling includes pulse zero, uses playback rate, cancels on seek and never rewinds on assist toggles', async () => {
+  const chart = sample(); chart.note.bt = [[],[],[],[]];
+  chart.note.laser = [[[0,[[0,[0,1]], [60,[1,0]], [120,[0,1]], [180,[1,0]]]]], []];
+  chart.audio.key_sound = {laser:{slam_event:{slam_mute:[180]}}}; chart.audio.bgm.vol = 0;
+  const page = viewerPage(chart); // no BGM: synthesized sounds still play, like the existing assist ticks
+  page.element('rate').onchange({target:{value:'0.5'}});
+  await page.element('start').onclick();
+  assert.deepEqual(page.sounds.map(s => s.at), [0,0]); // noise + pitched click, once
+  assert.ok(page.gains.some(g => g.gain.value === 0.3), 'same output scale as FX key sounds; BGM volume is independent');
+  await page.frame(200); close(page.sounds[2].at, 0.25);
+  const count = page.sounds.length;
+  page.element('assist').checked = true; page.element('assist').onchange(); await page.frame(0);
+  assert.equal(page.sounds.length, count);
+  page.element('seek').oninput({target:{value:'0.0625'}}); // exact pulse 60, at chart time 0.125
+  assert.ok(page.sounds.slice(0,count).every(s => s.stops.includes(undefined)), 'seek stops pending and playing sources');
+  await Promise.resolve(); await page.frame(0);
+  assert.equal(page.sounds.length, count + 2); // replay only the target slam
+  close(page.sounds.at(-1).at, 0.2);
+  await page.frame(250); assert.equal(page.sounds.length, count + 4);
+  await page.frame(250); assert.equal(page.sounds.length, count + 4, 'mute allocates no sources');
+  page.element('play').onclick(); const paused = page.sounds.length; await page.frame(100);
+  assert.equal(page.sounds.length, paused);
+});
+
+test('slam checkbox defaults on, silences already scheduled hits and skips disabled hits', async () => {
+  const chart = sample(); chart.note.laser = [[[0,[[0,[0,1]], [120,[1,0]], [240,[0,1]]]]], []];
+  const page = viewerPage(chart); assert.equal(page.element('slam').checked, true);
+  await page.element('start').onclick(); const bus = page.gains[0];
+  await page.frame(200); assert.equal(page.sounds.length, 4); // second slam scheduled for 0.25
+  page.element('slam').checked = false; page.element('slam').onchange(); assert.equal(bus.gain.value, 0);
+  await page.frame(300); assert.equal(page.sounds.length, 4);
+  page.element('slam').checked = true; page.element('slam').onchange(); assert.equal(bus.gain.value, 1);
+  await page.frame(0); assert.equal(page.sounds.length, 4);
+});
 
 test('full page initializes embedded and standalone, redraws both views and replaces chart without stale audio', async () => {
   const page = viewerPage(); assert.equal(page.element('play').disabled, true);

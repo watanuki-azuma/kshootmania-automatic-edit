@@ -42,6 +42,24 @@ const {pathToFileURL} = require('node:url');
     await page.locator('#start').click();
     await page.waitForTimeout(200);
     await page.locator('#play').click();
+    // Exercise every procedural slam variant in real WebAudio, including a silent mute.
+    await page.evaluate(() => {
+      window.slamStarts = 0;
+      const start = AudioBufferSourceNode.prototype.start;
+      AudioBufferSourceNode.prototype.start = function(...args) { window.slamStarts++; return start.apply(this, args); };
+    });
+    const slams = {format_version:1,meta:{title:'Slams'},beat:{bpm:[[0,120]]},
+      note:{laser:[[[0,[[0,[0,1]],[120,[1,0]],[240,[0,1]],[360,[1,0]],[480,[0,1]]]]],[]]},
+      audio:{key_sound:{laser:{slam_event:{slam_up:[120],slam_down:[240],slam_swing:[360],slam_mute:[480]}}}}};
+    await page.locator('#files').setInputFiles({name:'slams.kson',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(slams))});
+    await page.waitForFunction(() => document.querySelector('#title').textContent === 'Slams');
+    assert.equal(await page.locator('#slam').isChecked(), true);
+    await page.locator('#rate').selectOption('1');
+    await page.locator('#start').click();
+    await page.waitForTimeout(1200);
+    await page.locator('#play').click();
+    assert.equal(await page.evaluate(() => window.slamStarts), 4);
+    await page.locator('#slam').uncheck();
     // Opaque origin: same HTML and data URL AudioWorklet fallback in a sandboxed iframe.
     await page.goto('about:blank');  // drop the first page's animation loop
     await page.setContent('<iframe sandbox="allow-scripts" style="width:800px;height:950px"></iframe>');
