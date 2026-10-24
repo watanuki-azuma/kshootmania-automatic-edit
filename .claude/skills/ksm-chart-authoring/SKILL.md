@@ -12,8 +12,14 @@ description: K-Shoot MANIA の譜面（KSON）を音源から作る・既存譜�
 ### 1. 音源を解析する
 
 ```sh
-uv run ksmauto separate SONG.ogg -o work/stems     # 音源分離（demucs が入っていれば。無ければ飛ばす）
+uv run ksmauto separate SONG.ogg -o work/stems     # 音源分離（stems extra = demucs が必要）
 uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text work/analysis.txt
+```
+
+demucs が入っていない（`separate` が「demucs is not installed」で止まる）ときは分離を飛ばし、`--stems` なしで解析する:
+
+```sh
+uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
 ```
 
 `analysis.txt` を読む。先頭に BPM・offset・セクション、以下に小節ごとの 16 分グリッド（`X` 強、`x` 弱。3連の小節は 12 分割で `|` 区切り）。
@@ -23,7 +29,7 @@ uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text 
 - `high`: ハイハット・刻み。
 
 `--stems` を付けた場合は帯域の 3 段の代わりに楽器ごとの 7 段になる。**何に合わせて何を置くか**はこちらで決める（対応表は `references/charting-guide.md` の「音と配置の対応」）。
-- `kick` `snare` `hat`: ドラムを分けたもの。キックと同時に鳴るスネアは見分けが甘い（毎拍 `X` が並んだらキック＋クラップの重ねか漏れ）。
+- `kick` `snare` `hat`: ドラムを分けたもの。キックと同時に鳴るスネアは見分けが甘い（キックの位置ごとに `snare` が出たら、キック＋クラップの重ねかキックの高域の残り。キックより弱いスネアは逆に消える）。
 - `bass` `vocal` `other`: 発音位置（`X`/`x`）と、音が伸びている間の `=`。`other` はシンセ・ギター・ピアノなど。
 - `vpitch`: ボーカルの音程を曲の音域の中で 0（低い）〜9（高い）にしたもの。レーザーの位置の目安（低い = 左）。
 
@@ -77,7 +83,7 @@ uv run ksmauto render work/draft.ksmd --measures 0-31 -o work/page.png
 - lint: `hand-overload`（手が 3 本要る）、`fast-jack`（縦連が速すぎ）は原則ゼロにする。`unaligned` が出たら、音の無い位置のノーツを解析と照合して直す。`empty-loud` は意図した休憩でなければ埋める。
 - stats の `level_estimate` が目標 ±1.5 に入るまで密度を調整する。
 - render の PNG を開いて目で見る: 同じ形の繰り返しが単調すぎないか、レーザーとボタンが同じ手に重なっていないか、山場で密度が上がっているか。
-- 配置の偏りを `references/charting-guide.md` の「配置パターン」と比べる。レーザー中の空き手が C/D だけになっていないか（実譜面では FX-R と B が合わせて 4 割弱）、16 分が 1 つの形に偏っていないか。手元にコーパスがあれば `uv run python tests/eval/sdvxin_patterns.py --chart work/chart.kson` で同じ集計が出る。
+- 配置の偏りを `references/charting-guide.md` の「配置パターン」と比べる。レーザー中の空き手が C/D だけになっていないか（実譜面では FX-R と B が合わせて 3 割強）、16 分が 1 つの形に偏っていないか。手元にコーパスがあれば `uv run python tests/eval/sdvxin_patterns.py --chart work/chart.kson` で同じ集計が出る。
 
 ### 5. 仕上げ
 

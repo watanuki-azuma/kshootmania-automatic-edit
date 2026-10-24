@@ -84,3 +84,19 @@ def test_stems_rows(tmp_path):
     assert not m["onsets"]["bass"] and not m["sustain"]["bass"]  # near-silent stem
     text = to_text(a)
     assert "vpitch" in text and "kick" in text
+
+
+def test_stem_cells_short_stem_and_triplet_rows():
+    from ksmauto.analyze import STEM_ROWS, _measure_stems, _pitch_row, _span_row
+
+    # The stem ends ~58 ms into a 125 ms cell: the cell is mostly silent.
+    frames = 10
+    tracks = {"peaks": {k: (np.array([]), np.array([])) for k in STEM_ROWS},
+              "active": {"bass": np.ones(frames, dtype=bool)}, "pitch": np.full(frames, 69.0)}
+    m = _measure_stems(tracks, 0.0, 2.0, 4)
+    assert m["sustain"]["bass"] == [] and m["vocal_pitch"] == []
+
+    # Triplet display: pitch and sustain agree on which cells are voiced.
+    span = _span_row("." * 12, [[0.25, 0.25]], 4, 3)
+    pitch = _pitch_row([[0.25, 69.0]], 4, 3, 60.0, 72.0)
+    assert [c == "=" for c in span] == [c != "." for c in pitch]

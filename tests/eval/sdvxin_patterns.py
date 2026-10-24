@@ -54,7 +54,7 @@ def lane_name(kind, lane, mirror):
 def tally(chart, t):
     lasers = chart['note'].get('laser', [[], []])
     spans = [merged(_moving_laser_ranges({'note': {'laser': [side]}})) for side in lasers]
-    chips = sorted((y, kind, lane) for kind, lane, y, _ in _button_events(chart))
+    chips = sorted((y, kind, lane) for kind, lane, y, length in _button_events(chart) if length == 0)
     by_y = defaultdict(list)
     for y, kind, lane in chips:
         by_y[y].append((kind, lane))
@@ -89,7 +89,7 @@ def tally(chart, t):
         names = tuple(sorted(lane_name(k, l, False) for k, l in by_y[y]))
         t['free_chord'][' '.join(names)] += 1
         bt = [l for k, l in by_y[y] if k == 'bt']
-        if len(bt) != 1 or len(by_y[y]) != 1 or (run and y - run[-1][0] > 60):
+        if len(bt) != 1 or len(by_y[y]) != 1 or (run and y - run[-1][0] != 60):  # sixteenths only
             run = []
         if len(bt) == 1 and len(by_y[y]) == 1:
             run.append((y, bt[0]))

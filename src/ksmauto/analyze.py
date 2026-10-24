@@ -317,7 +317,7 @@ def _drum_flux(y: np.ndarray) -> dict[str, np.ndarray]:
     """Onset envelopes for kick / snare / hi-hat from NMF with masked, adaptive templates."""
     M = librosa.feature.melspectrogram(y=y, sr=SR, n_fft=N_FFT, hop_length=HOP, n_mels=64,
                                        fmax=SR / 2, power=1.0)
-    mf = librosa.mel_frequencies(n_mels=64, fmax=SR / 2)
+    mf = librosa.mel_frequencies(n_mels=66, fmax=SR / 2)[1:-1]  # filter centres (edges excluded)
     logf = np.log2(mf + 1)
     W = np.stack([np.exp(-0.5 * ((logf - np.log2(hz)) / width) ** 2) for hz, width, _, _ in DRUM_TEMPLATES.values()],
                  axis=1) + 1e-3
@@ -389,11 +389,11 @@ def _measure_stems(tracks: dict, t0: float, measure_sec: float, beats_per_measur
                       for row in STEM_ROWS},
            "sustain": {}, "vocal_pitch": []}
     bounds = [(int((t0 + k * cell_sec) * fps), int((t0 + (k + 1) * cell_sec) * fps)) for k in range(cells)]
+    # Frames past the end of a stem count as silent, so a cell is judged on its full length.
     for row, frames in tracks["active"].items():
         spans = []
         for k, (a, b) in enumerate(bounds):
-            seg = frames[max(0, a):max(0, b)]
-            if len(seg) and seg.mean() >= 0.5:
+            if b > a and frames[max(0, a):max(0, b)].sum() >= 0.5 * (b - a):
                 if spans and spans[-1][0] + spans[-1][1] == k:
                     spans[-1][1] += 1
                 else:
@@ -401,7 +401,7 @@ def _measure_stems(tracks: dict, t0: float, measure_sec: float, beats_per_measur
         out["sustain"][row] = [[_fmt_beat(k / 4), _fmt_beat(n / 4)] for k, n in spans]
     for k, (a, b) in enumerate(bounds):
         seg = tracks["pitch"][max(0, a):max(0, b)]
-        if len(seg) and np.isfinite(seg).mean() >= 0.5:
+        if b > a and np.isfinite(seg).sum() >= 0.5 * (b - a):
             out["vocal_pitch"].append([_fmt_beat(k / 4), round(float(np.nanmedian(seg)), 1)])
     return out
 
@@ -435,8 +435,8 @@ def _pitch_row(pitch: list, beats: int, div: int, lo: float, hi: float) -> str:
     """Vocal pitch as 0-9 within the song's vocal range (a laser-position hint)."""
     at = {round(b * 4): m for b, m in pitch}
     cells = []
-    for i in range(beats * div):
-        m = at.get(round(i / div * 4))
+    for i in range(beats * div):  # same cell-centre rule as _span_row
+        m = at.get(int((i + 0.5) / div * 4))
         cells.append("." if m is None else str(int(np.clip(round((m - lo) / max(hi - lo, 1e-6) * 9), 0, 9))))
     return "".join(cells)
 
