@@ -106,6 +106,10 @@ def main(argv=None):
     convert = sub.add_parser("convert", help="import a KSH chart as KSON")
     convert.add_argument("input", type=Path)
     convert.add_argument("-o", "--output", type=Path)
+    sdvxin = sub.add_parser("sdvxin", help="decode a local sdvx.in chart or report on a corpus")
+    sdvxin.add_argument("directory", type=Path)
+    sdvxin.add_argument("-o", "--output", type=Path)
+    sdvxin.add_argument("--report", action="store_true")
     for command in ("compile", "decompile"):
         draft = sub.add_parser(command)
         draft.add_argument("input", type=Path)
@@ -132,6 +136,26 @@ def main(argv=None):
     for command in ("validate", "info"):
         sub.add_parser(command).add_argument("files", type=Path, nargs="+")
     args = parser.parse_args(argv)
+    if args.command == "sdvxin":
+        from .sdvxin import load_sdvxin, report
+        from .kson import dumps_kson
+
+        try:
+            if args.report:
+                report(args.directory)
+            else:
+                chart = load_sdvxin(args.directory)
+                if args.output:
+                    save_kson(chart, args.output)
+                else:
+                    print(dumps_kson(chart), end="")
+            return 0
+        except ImportError:
+            print("image decoding requires numpy and Pillow: uv sync --extra audio --extra render", file=sys.stderr)
+            return 1
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"{args.directory}: {exc}", file=sys.stderr)
+            return 1
     if args.command == "edit":
         from .editor import run
 
