@@ -32,6 +32,7 @@ uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
 - `kick` `snare` `hat`: ドラムを分けたもの。キックと同時に鳴るスネアは見分けが甘い（キックの位置ごとに `snare` が出たら、キック＋クラップの重ねかキックの高域の残り。キックより弱いスネアは逆に消える）。
 - `bass` `vocal` `other`: 発音位置（`X`/`x`）と、音が伸びている間の `=`。`other` はシンセ・ギター・ピアノなど。
 - `vpitch`: ボーカルの音程を曲の音域の中で 0（低い）〜9（高い）にしたもの。レーザーの位置の目安（低い = 左）。
+- `olane`: `other`（ピアノ・シンセなど）の発音を、音の高さで A〜D に割り当てたもの。ピアノやアルペジオが主役の区間は、これを BT の階段の下書きにする（`references/charting-guide.md` の「楽器別の型」）。
 
 確認すること:
 - BPM の信頼度（conf）が低い、候補が割れている → 候補の倍・半分を疑う。曲のノリ（体感テンポ）が 120〜240 に入る方を取る。
@@ -40,7 +41,7 @@ uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
 
 ### 2. 構成と密度を決める（書く前に）
 
-`references/charting-guide.md` の表から、目標レベルの avg NPS・直角の量を決め、セクションごとに方針を一行ずつメモする（例: `m8-23 A: 8分の階段＋表拍にFX、レーザーはゆっくり往復`）。
+`references/charting-guide.md` の表から、目標レベルの avg NPS・直角の量を決め、セクションごとに方針を一行ずつメモする（例: `m8-23 A: 8分の階段＋表拍にFX、レーザーはゆっくり往復`）。`--stems` があれば区間ごとの主役の楽器と型も決める（例: `m40-47 ピアノ: BT だけ、olane どおりの階段`）。
 同じラベルのセクションは `copy`（必要なら `mirror`）で済ませる計画にする。
 
 ### 3. ドラフトを書く

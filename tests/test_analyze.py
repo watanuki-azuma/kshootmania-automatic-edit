@@ -86,13 +86,38 @@ def test_stems_rows(tmp_path):
     assert "vpitch" in text and "kick" in text
 
 
+def test_other_stem_lanes(tmp_path):
+    """A piano-like C-E-G-C arpeggio in eighths reads as an A-B-C-D stair."""
+    sr, bpm, offset, seconds = 22050, 150.0, 0.1, 16.0
+    eighth = 30.0 / bpm
+    t = np.arange(int(eighth * sr)) / sr
+    n = int(seconds * sr)
+    other = np.zeros(n)
+    for i in range(int((seconds - 0.5) / eighth)):
+        f = 440.0 * 2 ** (((60, 64, 67, 72)[i % 4] - 69) / 12)
+        s = int((offset + i * eighth) * sr)
+        other[s:s + len(t)] += sum(np.sin(2 * np.pi * f * k * t) / k for k in (1, 2, 3)) * np.exp(-t * 8)
+    stems = tmp_path / "stems"
+    stems.mkdir()
+    quiet = np.random.default_rng(2).standard_normal(n) * 1e-4
+    for name, y in {"drums": quiet, "vocals": quiet, "bass": quiet, "other": other}.items():
+        sf.write(stems / f"{name}.wav", y, sr)
+    sf.write(tmp_path / "mix.wav", other / np.abs(other).max() * 0.8, sr)
+
+    a = analyze(tmp_path / "mix.wav", tempo=[[0, bpm]], offset_ms=100, stems=stems)
+    assert [p for _, p in a["measures"][3]["stems"]["other_pitch"]] == [60, 64, 67, 72] * 2
+    line, = [ln for ln in to_text(a).splitlines() if ln.startswith("3 ")]
+    assert line.split()[-1] == "A.B.C.D.A.B.C.D."
+
+
 def test_stem_cells_short_stem_and_triplet_rows():
     from ksmauto.analyze import STEM_ROWS, _measure_stems, _pitch_row, _span_row
 
     # The stem ends ~58 ms into a 125 ms cell: the cell is mostly silent.
     frames = 10
     tracks = {"peaks": {k: (np.array([]), np.array([])) for k in STEM_ROWS},
-              "active": {"bass": np.ones(frames, dtype=bool)}, "pitch": np.full(frames, 69.0)}
+              "active": {"bass": np.ones(frames, dtype=bool)}, "pitch": np.full(frames, 69.0),
+              "other_pitch": (np.array([]), np.array([]))}
     m = _measure_stems(tracks, 0.0, 2.0, 4)
     assert m["sustain"]["bass"] == [] and m["vocal_pitch"] == []
 

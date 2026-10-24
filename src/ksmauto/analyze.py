@@ -32,6 +32,8 @@ SUSTAIN_ROWS = {"bass": "bass", "vocal": "vocals", "other": "other"}
 # and never below FLOOR_DB under the loudest stem (a near-silent stem is all bleed).
 ACTIVE_DB = 20.0
 FLOOR_DB = 40.0
+# Pitch range (lowest note, semitones) for the dominant note at each `other` onset.
+OTHER_PITCH = ("C2", 72)
 BPM_RANGE = (60.0, 300.0)
 # Prior for octave resolution: rhythm games mostly sit in this range.
 BPM_PREFERRED = (120.0, 240.0)
@@ -369,6 +371,15 @@ def _stem_tracks(stems_dir: Path, period: float) -> dict:
     active["vocal"] = active["vocal"][:n] & voiced[:n]
     pitch = np.where(active["vocal"], librosa.hz_to_midi(f0[:n]), np.nan)
     drums = _drum_flux(loaded["drums"][0])
+    # Harmonic-summed CQT salience; the stem is polyphonic, so this is the loudest
+    # note around each onset (piano/synth contour), not a transcribed melody.
+    fmin, bins = librosa.note_to_midi(OTHER_PITCH[0]), OTHER_PITCH[1]
+    sal = np.abs(librosa.cqt(loaded["other"][0], sr=SR, hop_length=HOP,
+                             fmin=librosa.midi_to_hz(fmin), n_bins=bins, bins_per_octave=12))
+    C = sal.copy()
+    for h, w in ((2, 0.5), (3, 0.33), (4, 0.25)):
+        k = int(round(12 * np.log2(h)))
+        sal[:-k] += w * C[k:]
     peaks = {}
     for row, (stem, lo, hi) in STEM_ROWS.items():
         env = drums[row] if row in drums else _band_flux(loaded[stem][1], freqs, lo, hi)
@@ -378,7 +389,10 @@ def _stem_tracks(stems_dir: Path, period: float) -> dict:
             keep = active[row][frames]
             times, heights = times[keep], heights[keep]
         peaks[row] = (times, heights)
-    return {"peaks": peaks, "active": active, "pitch": pitch}
+    times = peaks["other"][0]
+    frames = np.minimum((times * fps).astype(int), sal.shape[1] - 1)
+    other_pitch = np.array([fmin + sal[:, i:i + 6].mean(axis=1).argmax() for i in frames], dtype=float)
+    return {"peaks": peaks, "active": active, "pitch": pitch, "other_pitch": (times, other_pitch)}
 
 
 def _measure_stems(tracks: dict, t0: float, measure_sec: float, beats_per_measure: int) -> dict:
@@ -387,7 +401,8 @@ def _measure_stems(tracks: dict, t0: float, measure_sec: float, beats_per_measur
     cell_sec = measure_sec / cells
     out = {"onsets": {row: _measure_onsets(*tracks["peaks"][row], t0, measure_sec, beats_per_measure)
                       for row in STEM_ROWS},
-           "sustain": {}, "vocal_pitch": []}
+           "sustain": {}, "vocal_pitch": [],
+           "other_pitch": _measure_onsets(*tracks["other_pitch"], t0, measure_sec, beats_per_measure)}
     bounds = [(int((t0 + k * cell_sec) * fps), int((t0 + (k + 1) * cell_sec) * fps)) for k in range(cells)]
     # Frames past the end of a stem count as silent, so a cell is judged on its full length.
     for row, frames in tracks["active"].items():
@@ -441,12 +456,24 @@ def _pitch_row(pitch: list, beats: int, div: int, lo: float, hi: float) -> str:
     return "".join(cells)
 
 
+def _lane_row(onsets: list, pitch: list, window: list, beats: int, div: int) -> str:
+    """`other` onsets as lanes A-D by pitch within the neighbouring measures (BT stairs)."""
+    lo, hi = np.percentile(window, [10, 90]) if window else (0.0, 0.0)
+    shown = {b for b, h in onsets if h >= 0.3}
+    cells = ["."] * (beats * div)
+    for b, m in pitch:
+        i = int(round(b * div))
+        if b in shown and 0 <= i < len(cells) and abs(b * div - i) < 1e-3:
+            cells[i] = "ABCD"[int(np.clip(round((m - lo) / (hi - lo) * 3), 0, 3))] if hi - lo >= 1 else "B"
+    return "".join(cells)
+
+
 def to_text(a: dict) -> str:
     t = a["tempo"]
     beats = t["time_sig"][0]
     ms = a["measures"]
     stems = bool(ms) and "stems" in ms[0]
-    names = list(STEM_ROWS) + ["vpitch"] if stems else ["low", "mid", "high"]
+    names = list(STEM_ROWS) + ["vpitch", "olane"] if stems else ["low", "mid", "high"]
     lines = [
         f"BPM {t['bpm']:g} (conf {t['confidence']:.2f})"
         + "".join(f" -> m{m}:{v:g}" for m, v in t.get("changes", []))
@@ -458,7 +485,8 @@ def to_text(a: dict) -> str:
         values = [p for m in ms for _, p in m["stems"]["vocal_pitch"]]
         lo, hi = (np.percentile(values, [5, 95]) if values else (60.0, 72.0))
         lines.append(f"stems: '=' = still sounding; vpitch 0-9 = vocal pitch over "
-                     f"{librosa.midi_to_note(lo)}-{librosa.midi_to_note(hi)} (low = left)")
+                     f"{librosa.midi_to_note(lo)}-{librosa.midi_to_note(hi)} (low = left); "
+                     "olane = other-stem note as lane A-D by pitch within m-1..m+1")
     lines += ["", f"{'m':<4}{'energy':<8}" + "".join(f"{n:<{beats * 4 + 1}}" for n in names)]
     for m in ms:
         triplet = sum(1 for b, _ in m["onsets"]["all"] if abs(b * 3 - round(b * 3)) < 1e-3 and abs(b * 4 - round(b * 4)) > 1e-3)
@@ -468,6 +496,8 @@ def to_text(a: dict) -> str:
             rows = [_grid_row(st["onsets"][k], beats, div) for k in STEM_ROWS]
             rows = [_span_row(r, st["sustain"].get(k, []), beats, div) for r, k in zip(rows, STEM_ROWS)]
             rows.append(_pitch_row(st["vocal_pitch"], beats, div, lo, hi))
+            near = [p for n in ms[max(0, m["index"] - 1):m["index"] + 2] for _, p in n["stems"].get("other_pitch", [])]
+            rows.append(_lane_row(st["onsets"]["other"], st.get("other_pitch", []), near, beats, div))
         else:
             rows = [_grid_row(m["onsets"][k], beats, div) for k in ("low", "mid", "high")]
         if div == 3:
