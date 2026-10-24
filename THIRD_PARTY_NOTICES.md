@@ -1,6 +1,6 @@
 # Third-party notices
 
-src/ksmauto/preview_template.html（`ksmauto preview` / `ksmauto viewer` のページ）の一部（カメラ・スクロール・直角の揺れと直角音のタイミング・グラフ計算）は、以下のソフトウェアの実装を参考に移植している。該当箇所にはコメントで元のファイル名を記している。効果音などの素材ファイルは含まない。
+src/ksmauto/viewer.html（`ksmauto preview` のページ。[KSM-WEB-VIEWER](https://github.com/watanuki-azuma/KSM-WEB-VIEWER) のリリース版をそのまま取り込んだもの）の一部（カメラ・スクロール・直角の揺れと直角音のタイミング・グラフ計算）は、以下のソフトウェアの実装を参考に移植している。該当箇所にはコメントで元のファイル名を記している。効果音などの素材ファイルは含まない。
 
 ## K-Shoot MANIA v2 (https://github.com/kshootmania/ksm-v2)
 

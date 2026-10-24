@@ -111,7 +111,7 @@ def quantiles(values, duration=False, chart=False):
 
 
 def curve_at(curve, x):
-    """Quadratic Bezier graph value, as in preview_template.html / libkson."""
+    """Quadratic Bezier graph value, as in the viewer / libkson."""
     a, b = curve
     if a == b:
         return x

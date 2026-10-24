@@ -145,8 +145,6 @@ def main(argv=None):
     preview.add_argument("input", type=Path)
     preview.add_argument("--audio", type=Path, help="embed this audio file (default: the chart's bgm, if found)")
     preview.add_argument("-o", "--output", type=Path, required=True)
-    viewer = sub.add_parser("viewer", help="write a standalone HTML chart viewer")
-    viewer.add_argument("-o", "--output", type=Path, required=True)
     for command in ("validate", "info"):
         sub.add_parser(command).add_argument("files", type=Path, nargs="+")
     args = parser.parse_args(argv)
@@ -179,13 +177,13 @@ def main(argv=None):
         except (OSError, ValueError) as exc:
             print(f"{args.input}: {exc}", file=sys.stderr)
             return 1
-    if args.command in {"preview", "viewer"}:
+    if args.command == "preview":
         from .preview import build_preview
 
         try:
-            chart = _load(args.input) if args.command == "preview" else None
-            audio = args.audio if args.command == "preview" else None
-            bgm = (chart or {}).get("audio", {}).get("bgm", {}).get("filename")
+            chart = _load(args.input)
+            audio = args.audio
+            bgm = chart.get("audio", {}).get("bgm", {}).get("filename")
             if audio is None and bgm and (args.input.parent / bgm).exists():
                 audio = args.input.parent / bgm
             args.output.write_text(build_preview(chart, audio), encoding="utf-8")

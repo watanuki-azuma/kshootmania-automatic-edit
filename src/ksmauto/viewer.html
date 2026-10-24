@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__</title>
+<title>Chart viewer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one screen — chart card on top, playfield in the middle, transport below. A night arcade cabinet, dark only. */
@@ -711,10 +711,10 @@ function jdgScale(bottom, legacy, overlay = false) {
   return !overlay && !legacy ? Math.max(scale, 1) : scale;
 }
 </script>
-<script id="chart-data" type="application/json">__CHART_JSON__</script>
+<script id="chart-data" type="application/json">null</script>
 <script>
 const $ = id => document.getElementById(id);
-const AUDIO_SRC = "__AUDIO_SRC__";
+const AUDIO_SRC = "";
 let dispose = null, audioURL = null, loadedChart = null;
 const audioFiles = new Map();
 function normalPath(path) {
