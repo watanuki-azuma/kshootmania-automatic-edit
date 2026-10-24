@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+# Downloaded charts/audio (not redistributed)
+corpus/
+# Generated outputs
+out/
