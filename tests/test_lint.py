@@ -40,3 +40,18 @@ def test_stats_on_gram():
     s = stats(load_ksh(GRAM))
     assert s["bt_chips"] > 100 and s["slams"] > 0
     assert 10 <= s["level_estimate"] <= 20
+
+
+def test_chain_ticks_follow_ksm_v2():
+    from ksmauto.lint import chain_ticks
+
+    def chart(bt=(), laser=(), bpm=180.0):
+        return {"beat": {"bpm": [[0, bpm]]}, "note": {"bt": [list(bt), [], [], []], "fx": [[], []], "laser": [list(laser), []]}}
+
+    assert len(chain_ticks(chart(bt=[0, [960, 60], [1920, 180]]))) == 3     # chip, short holds count once
+    assert chain_ticks(chart(bt=[[0, 960]]))[:2] == [60, 120] and len(chain_ticks(chart(bt=[[0, 960]]))) == 14
+    assert len(chain_ticks(chart(bt=[[0, 960]], bpm=256.0))) == 6          # 8th ticks from BPM 256
+    assert chain_ticks(chart(laser=[[0, [[0, 0.0], [240, 1.0]]]])) == [0, 60, 120, 180]
+    assert chain_ticks(chart(laser=[[0, [[0, [0.0, 1.0]]]]])) == [0]          # lone slam
+    assert chain_ticks(chart(laser=[[0, [[0, [0.0, 1.0]], [240, 0.5]]]])) == [0, 60, 120, 180]
+    assert chain_ticks(chart(laser=[[0, [[0, [0.0, 1.0]], [30, 1.0], [270, 0.0]]]])) == [0, 60, 120, 180, 240]

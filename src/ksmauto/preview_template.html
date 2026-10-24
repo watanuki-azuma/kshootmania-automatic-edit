@@ -113,9 +113,26 @@ const lasers = [];  // {side, wide, pts:[{t, a, b}]}
 (chart.note?.laser || []).forEach((lane, side) => lane.forEach(([start, points, width]) => {
   lasers.push({side, wide: width === 2, pts: points.map(([ry, v]) => { const [a, b] = Array.isArray(v) ? v : [v, v]; return {y: start + ry, t: pulseToSec(start + ry), a, b}; })});
 }));
+// Chain ticks as K-Shoot MANIA v2 counts them (same as `ksmauto stats`): holds and laser lines
+// tick every 16th (8th from BPM 256), slams count once, a 32nd after a slam is skipped.
+const bpmAtPulse = p => { let b = bpms[0][2]; for (const x of bpms) if (x[0] <= p) b = x[2]; return b; };
 const chainEvents = [];
-for (const n of notes) chainEvents.push(n.t0);
-for (const l of lasers) for (const p of l.pts) if (p.a !== p.b) chainEvents.push(p.t);
+for (const n of notes) {
+  const step = bpmAtPulse(n.y0) >= 256 ? 120 : 60, len = n.y1 - n.y0;
+  if (len < step * 2) chainEvents.push(n.t0);
+  else if (len <= step * 3) chainEvents.push(pulseToSec(n.y0 + step));
+  else for (let p = (Math.floor((n.y0 + step - 1) / step) + 1) * step; p < n.y1 - step; p += step) chainEvents.push(pulseToSec(p));
+}
+for (const l of lasers) {
+  const p = l.pts;
+  for (const q of p) if (q.a !== q.b) chainEvents.push(q.t);
+  for (let i = 0; i + 1 < p.length; i++) {
+    let start = p[i].y;
+    if (p[i].a !== p[i].b) { if (p[i + 1].a === p[i].b && p[i + 1].y - p[i].y <= 30) continue; start += 30; }
+    const step = bpmAtPulse(start) >= 256 ? 120 : 60;
+    for (let y = Math.ceil(start / step) * step; y < p[i + 1].y; y += step) chainEvents.push(pulseToSec(y));
+  }
+}
 chainEvents.sort((a, b) => a - b);
 const lastSec = Math.max(...notes.map(n => n.t1), ...lasers.map(l => l.pts.at(-1).t), 1) + 2;
 $('total').textContent = chainEvents.length;
@@ -126,7 +143,7 @@ $('title').textContent = meta.title || 'Untitled'; $('artist').textContent = met
 const DIFF = ['LIGHT', 'CHALLENGE', 'EXHAUST', 'INFINITE'];
 $('diffname').textContent = typeof meta.difficulty === 'number' ? DIFF[meta.difficulty] || '' : (meta.difficulty || '');
 $('level').textContent = meta.level ?? '';
-$('srcnote').textContent = `${meta.chart_author ? '譜面: ' + meta.chart_author + ' · ' : ''}ノーツ ${notes.length} · 直角 ${chainEvents.length - notes.length}` + (hasAudio ? '' : ' · 音源なし（無音で再生）');
+$('srcnote').textContent = `${meta.chart_author ? '譜面: ' + meta.chart_author + ' · ' : ''}ノーツ ${notes.length} · 直角 ${lasers.reduce((n, l) => n + l.pts.filter(q => q.a !== q.b).length, 0)} · チェイン ${chainEvents.length}` + (hasAudio ? '' : ' · 音源なし（無音で再生）');
 
 // ---- clock. audio.currentTime is the master but updates in coarse steps, so a
 // performance.now() estimate runs between them and resyncs on drift. What is on

@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from fractions import Fraction
 
-from .kson import validate
+from .kson import _EFFECT_DEFAULTS, validate
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,12 @@ _META = {"title": "title", "artist": "artist", "chart_author": "chart_author",
 _BGM = {"audio": "filename", "offset": "offset", "volume": "vol", "preview": "preview"}
 _LANES = {name: ("bt", i) for i, name in enumerate("ABCD")}
 _LANES.update({name: ("fx", i) for i, name in enumerate("LR")})
+# Names usable without a `def` (KSON spec: predefined audio effects, FX key sounds).
+_FX_EFFECTS = {"retrigger", "gate", "flanger", "pitch_shift", "bitcrusher", "phaser", "wobble", "tapestop",
+               "echo", "sidechain"}
+_LASER_EFFECTS = {"peaking_filter", "high_pass_filter", "low_pass_filter", "bitcrusher"}
+_KEY_SOUNDS = {"clap", "clap_impact", "clap_punchy", "snare", "snare_lo"}
+_EFFECT_TYPES = set(_EFFECT_DEFAULTS) | {"switch_audio"}
 
 
 def _uncomment(line):
@@ -129,6 +135,34 @@ def _note_key(kind, note):
                       for p in note[1]], note[2] if len(note) > 2 else 1]
 
 
+def _params(text):
+    """`k=v,k=v` -> dict (values stay strings, as KSON stores them)."""
+    params = {}
+    for field in filter(None, text.split(",")):
+        key, sep, value = field.partition("=")
+        if not sep or not re.fullmatch(r"[a-z_0-9]+", key) or not value:
+            raise ValueError(f"Expected KEY=VALUE, got {field!r}")
+        params[key] = value
+    return params
+
+
+def _tag(token):
+    """Split `L~2@gate(wave_length=1/16)` into the note part, effect name and params."""
+    note, at, rest = token.partition("@")
+    if not at:
+        return token, None, None
+    match = re.fullmatch(r"([A-Za-z0-9_.\-]+)(?:\((.*)\))?", rest)
+    if not match:
+        raise ValueError(f"Expected @NAME or @NAME(KEY=VALUE,...): {token!r}")
+    return note, "" if match[1] == "-" else match[1], _params(match[2] or "")
+
+
+def _format_tag(name, params):
+    if params is None:
+        return ""
+    return f"@{name or '-'}" + (f"({','.join(f'{k}={v}' for k, v in params.items())})" if params else "")
+
+
 def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[DraftError]]:
     """Collect syntax and semantic errors while building a possibly partial chart."""
     chart = copy.deepcopy(base) if base is not None else {}
@@ -138,6 +172,9 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
         meta.setdefault(key, default)
     errors, statements, labels = [], [], []
     headers, signatures, bpms = {}, {}, {}
+    defs = {"fx": [], "laser": []}
+    fx_tags, laser_events = {}, []   # (lane, y) -> (name, params, line, col); [y, name, line, col]
+    fx_switches = []                 # [y, lane, name, params, line, col]: effect changes inside long FX
     current = None
 
     def error(line, col, message):
@@ -149,7 +186,16 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
         if not line:
             continue
         try:
-            if line.startswith("@m"):
+            if line.split()[0] == "def":
+                parts = line.split()
+                if len(parts) < 4 or parts[1] not in ("fx", "laser"):
+                    raise ValueError("Expected def fx|laser NAME TYPE [KEY=VALUE ...]")
+                if parts[3] not in _EFFECT_TYPES:
+                    raise ValueError(f"Unknown audio effect type: {parts[3]}")
+                params = _params(",".join(parts[4:]))
+                definition = {"type": parts[3], **({"v": params} if params else {})}
+                defs[parts[1]] = [d for d in defs[parts[1]] if d[0] != parts[2]] + [[parts[2], definition]]
+            elif line.startswith("@m"):
                 match = re.fullmatch(r'@m(\d+)(?:\s+(".*"))?', line)
                 if not match:
                     raise ValueError('Expected @mN or @mN "label"')
@@ -275,8 +321,13 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
         selected = [(kind, lane, copy.deepcopy(note)) for kind, lanes in notes.items()
                     for lane, items in enumerate(lanes) for note in items
                     if start <= _bounds(kind, note)[0] < end]
+        shift = destination - start
+        for y, *rest in [e for e in laser_events if start <= e[0] < end]:
+            laser_events.append([y + shift, *rest])
+        for y, lane, *rest in [e for e in fx_switches if start <= e[0] < end]:
+            fx_switches.append([y + shift, 1 - lane if len(values) == 5 else lane, *rest])
         for kind, lane, note in selected:
-            shift = destination - start
+            tag = fx_tags.get((lane, _bounds(kind, note)[0])) if kind == "fx" else None
             if isinstance(note, int):
                 note += shift
             else:
@@ -288,6 +339,8 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
                         v = point[1]
                         point[1] = [1 - x for x in v] if isinstance(v, list) else 1 - v
             add(kind, lane, note, line, tokens[0][1])
+            if tag:
+                fx_tags[(lane, _bounds(kind, note)[0])] = tag
 
     for line, measure, tokens in statements:
         try:
@@ -305,6 +358,15 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
                 bpms[y] = value
                 continue
             y = position(first, measure)
+            if len(tokens) == 3 and values[1] == "laser_effect":
+                laser_events.append([y, values[2], line, tokens[2][1]])
+                continue
+            if len(tokens) >= 2 and values[1] == "fx_effect":
+                if len(tokens) != 3 or not values[2].startswith(("L@", "R@")):
+                    raise ValueError("Expected fx_effect L@NAME(...) or R@NAME(...)")
+                lane_name, name, params = _tag(values[2])
+                fx_switches.append([y, "LR".index(lane_name), name, params, line, tokens[2][1]])
+                continue
             if len(tokens) < 2:
                 raise ValueError("Expected button lanes or a laser section")
             if values[1] in {"l", "r", "l2", "r2"}:
@@ -340,7 +402,10 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
             else:
                 for token, note_col in tokens[1:]:
                     try:
+                        token, name, params = _tag(token)
                         parts = token.split("~")
+                        if name is not None and parts[0] not in ("L", "R"):
+                            raise ValueError("Only FX notes take @EFFECT / @KEY_SOUND")
                         if len(parts) not in (1, 2) or parts[0] not in _LANES:
                             raise ValueError(f"Invalid button note: {token!r}")
                         kind, lane = _LANES[parts[0]]
@@ -355,6 +420,8 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
                                 raise ValueError("Long-note length must be positive")
                             note = [y, length]
                         add(kind, lane, note, line, note_col)
+                        if name is not None:
+                            fx_tags[(lane, y)] = (name, params, line, note_col)
                     except ValueError as exc:
                         error(line, note_col, exc)
         except ValueError as exc:
@@ -371,6 +438,7 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
                 if original is not None and _note_key(kind, note) == _note_key(kind, original):
                     lane[i] = copy.deepcopy(_without_curves(original) if kind == "laser" else original)
     chart["note"] = notes
+    _apply_effects(chart, notes, defs, fx_tags, fx_switches, laser_events, error)
     beat = chart.setdefault("beat", {})
     beat["bpm"], beat["time_sig"] = [[y, v] for y, v in sorted(bpms.items())], sigs
     if "disp_bpm" not in meta:
@@ -391,6 +459,72 @@ def compile_draft(text: str, base: dict | None = None) -> tuple[dict, list[Draft
         if issue.level == "error":
             error(0, 0, f"{issue.path}: {issue.message}")
     return chart, errors
+
+
+def _apply_effects(chart, notes, defs, fx_tags, fx_switches, laser_events, error):
+    """Write FX effects / key sounds and laser filter switches; the draft replaces the
+    base chart's definitions and events (param_change and other keys are kept)."""
+    audio = chart.get("audio", {})
+    effect = audio.get("audio_effect", {})
+    if not (defs["fx"] or defs["laser"] or fx_tags or fx_switches or laser_events or effect.get("fx", {}).get("long_event")
+            or effect.get("laser", {}).get("pulse_event") or audio.get("key_sound", {}).get("fx")):
+        return
+    known = {"fx": _FX_EFFECTS | {"", *(d[0] for d in defs["fx"])}, "laser": _LASER_EFFECTS | {d[0] for d in defs["laser"]}}
+    long_event, chip_event = {}, {}
+    for y, lane, name, params, line, col in fx_switches:
+        if not any(isinstance(n, list) and n[0] < y < n[0] + n[1] for n in notes["fx"][lane]):
+            error(line, col, "fx_effect must fall inside a long FX note on that lane (after its start)")
+        elif name not in known["fx"]:
+            error(line, col, f"Unknown FX effect {name!r} (add: def fx {name} TYPE ...)")
+        else:
+            long_event.setdefault(name, [[], []])[lane].append([y, params] if params else y)
+    for (lane, y), (name, params, line, col) in sorted(fx_tags.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        note = next(n for n in notes["fx"][lane] if _bounds("fx", n)[0] == y)
+        if isinstance(note, list):
+            if name not in known["fx"]:
+                error(line, col, f"Unknown FX effect {name!r} (add: def fx {name} TYPE ...)")
+                continue
+            long_event.setdefault(name, [[], []])[lane].append([y, params] if params else y)
+        else:
+            if name not in _KEY_SOUNDS and "." not in name:
+                error(line, col, f"Unknown FX key sound {name!r} (built-in: {', '.join(sorted(_KEY_SOUNDS))}, or a file name)")
+                continue
+            extra = set(params) - {"vol"}
+            if extra:
+                error(line, col, f"FX key sounds only take vol, not {', '.join(sorted(extra))}")
+                continue
+            try:
+                event = [y, {"vol": _number(params["vol"])}] if params else y
+            except ValueError as exc:
+                error(line, col, exc)
+                continue
+            chip_event.setdefault(name, [[], []])[lane].append(event)
+    for lanes in long_event.values():
+        for events in lanes:
+            events.sort(key=lambda e: e if isinstance(e, int) else e[0])
+    pulse_event = {}
+    for y, name, line, col in sorted(laser_events):
+        if name not in known["laser"]:
+            error(line, col, f"Unknown laser effect {name!r} (add: def laser {name} TYPE ...)")
+            continue
+        if y not in pulse_event.setdefault(name, []):
+            pulse_event[name].append(y)
+    audio = chart.setdefault("audio", {})
+    effect = audio.setdefault("audio_effect", {})
+    for kind, key, value in (("fx", "def", defs["fx"]), ("fx", "long_event", long_event),
+                             ("laser", "def", defs["laser"]), ("laser", "pulse_event", pulse_event)):
+        effect.setdefault(kind, {})[key] = value
+        if not value:
+            del effect[kind][key]
+    audio.setdefault("key_sound", {}).setdefault("fx", {})["chip_event"] = chip_event
+    for parent, key in ((effect, "fx"), (effect, "laser"), (audio["key_sound"], "fx"), (audio, "audio_effect"),
+                        (audio, "key_sound")):
+        child = parent.get(key)
+        if isinstance(child, dict):
+            if key == "fx" and parent is audio["key_sound"] and not child.get("chip_event"):
+                child.pop("chip_event", None)
+            if not child:
+                del parent[key]
 
 
 def _format_beat(value):
@@ -448,6 +582,38 @@ def decompile(chart: dict) -> tuple[str, list[str]]:
     for m, (n, d) in sigs:
         if m:
             rows(m).append((Fraction(), -1, f"time_sig {n}/{d}"))
+    audio = chart.get("audio", {})
+    effect = audio.get("audio_effect", {})
+    tags = {}   # (lane, y) -> "@name(...)"
+    for name, lanes in effect.get("fx", {}).get("long_event", {}).items():
+        for lane, events in enumerate(lanes):
+            for event in events:
+                y, params = (event, None) if isinstance(event, int) else (event[0], event[1])
+                tags.setdefault((lane, y), []).append(_format_tag(name, params or {}))
+    for name, lanes in audio.get("key_sound", {}).get("fx", {}).get("chip_event", {}).items():
+        for lane, events in enumerate(lanes):
+            for event in events:
+                y, params = (event, None) if isinstance(event, int) else (event[0], event[1])
+                params = {k: f"{v:g}" for k, v in (params or {}).items()}
+                tags.setdefault((lane, y), []).append(_format_tag(name, params))
+    fx_starts = {(lane, _bounds("fx", n)[0]) for lane, notes in enumerate(chart.get("note", {}).get("fx", [])) for n in notes}
+    if any(len(v) > 1 for v in tags.values()):
+        warn("several FX effects on one note")
+    for lane, y in set(tags) - fx_starts:
+        m, b = _locate(y, sigs)
+        rows(m).append((b, 5, f"{_format_beat(b)} fx_effect {'LR'[lane]}{tags.pop((lane, y))[0]}"))
+    defs = [f"def {kind} {name} {d['type']}" + "".join(f" {k}={v}" for k, v in d.get("v", {}).items())
+            for kind in ("fx", "laser") for name, d in effect.get(kind, {}).get("def", [])]
+    for name, ys in effect.get("laser", {}).get("pulse_event", {}).items():
+        for y in ys:
+            m, b = _locate(y, sigs)
+            rows(m).append((b, 4, f"{_format_beat(b)} laser_effect {name}"))
+    for kind in ("fx", "laser"):
+        for key in effect.get(kind, {}).keys() - {"def", "long_event", "pulse_event"}:
+            if effect[kind][key] or key != "param_change":
+                warn(f"audio_effect.{kind}.{key}")
+    if audio.get("key_sound", {}).get("laser"):
+        warn("key_sound.laser")
     grouped = {}
     for name, (kind, lane) in _LANES.items():
         lanes = chart.get("note", {}).get(kind, [[] for _ in range(4 if kind == "bt" else 2)])
@@ -457,6 +623,8 @@ def decompile(chart: dict) -> tuple[str, list[str]]:
             token = name
             if end > y:
                 token += "~" + _format_beat(Fraction(end - y) / Fraction(960, _sig_at(m, sigs)[1]))
+            if kind == "fx" and (lane, y) in tags:
+                token += tags[(lane, y)][0]
             grouped.setdefault((m, b), []).append(token)
     for (m, b), tokens in grouped.items():
         rows(m).append((b, 1, f"{_format_beat(b)} {' '.join(tokens)}"))
@@ -490,10 +658,6 @@ def decompile(chart: dict) -> tuple[str, list[str]]:
     for key in ("camera", "bg"):
         if chart.get(key):
             warn(key)
-    audio = chart.get("audio", {})
-    for key, description in (("audio_effect", "audio effects"), ("key_sound", "key sounds")):
-        if audio.get(key):
-            warn(description)
     # Also report less common metadata/provenance not covered by the DSL.
     for path, obj, supported in (
         ("meta", meta, set(_META.values())),
@@ -507,7 +671,7 @@ def decompile(chart: dict) -> tuple[str, list[str]]:
         for key in obj.keys() - supported:
             warn(f"{path + '.' if path else ''}{key}")
     output = [f"# unsupported: {warning}" for warning in warnings]
-    output += header
+    output += header + defs
     for m, content in sorted(measures.items()):
         output.append("")
         names = labels.get(m, [])

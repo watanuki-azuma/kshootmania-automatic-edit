@@ -302,7 +302,8 @@ def test_decompile_warnings_and_curve_dropping():
     chart["audio"] = {"audio_effect": {"laser": {"peaking_filter_delay": 0}},
                       "key_sound": {"laser": {"vol": [[0, 0.5]]}}}
     text, warnings = decompile(chart)
-    assert set(warnings) == {"laser curves", "scroll_speed", "stop", "camera", "audio effects", "key sounds", "bg"}
+    assert set(warnings) == {"laser curves", "scroll_speed", "stop", "camera", "audio_effect.laser.peaking_filter_delay",
+                             "key_sound.laser", "bg"}
     for warning in warnings:
         assert f"# unsupported: {warning}\n" in text
     rebuilt, errors = compile_draft(text, base=chart)
@@ -436,3 +437,33 @@ def test_copy_single_measure():
     chart, errors = compile_draft("title: t\nbpm: 120\n@m1\n0 A\n1 B\ncopy m1 -> m2 mirror\n")
     assert not errors
     assert chart["note"]["bt"][3] == [960 * 2] and chart["note"]["bt"][2] == [960 * 2 + 240]
+
+
+def test_fx_effects_key_sounds_and_laser_filters():
+    chart = compile_ok("def fx slowstop tapestop speed=20%\n"
+                       "@m0\n0 L~2@gate(wave_length=1/16) R@clap(vol=0.6)\n1 fx_effect L@retrigger(wave_length=1/8)\n"
+                       "2 laser_effect low_pass_filter\n3 R~1@slowstop\n@m1\ncopy m0 -> m1 mirror")
+    effect, keys = chart["audio"]["audio_effect"], chart["audio"]["key_sound"]
+    assert effect["fx"]["def"] == [["slowstop", {"type": "tapestop", "v": {"speed": "20%"}}]]
+    assert effect["fx"]["long_event"]["gate"] == [[[0, {"wave_length": "1/16"}]], [[960, {"wave_length": "1/16"}]]]
+    assert effect["fx"]["long_event"]["retrigger"] == [[[240, {"wave_length": "1/8"}]], [[1200, {"wave_length": "1/8"}]]]
+    assert effect["fx"]["long_event"]["slowstop"] == [[960 + 720], [720]]
+    assert keys["fx"]["chip_event"]["clap"] == [[[960, {"vol": 0.6}]], [[0, {"vol": 0.6}]]]
+    assert effect["laser"]["pulse_event"] == {"low_pass_filter": [480, 1440]}
+    text, warnings = decompile(chart)
+    assert not warnings
+    assert "0 L~2@gate(wave_length=1/16) R@clap(vol=0.6)" in text and "1 fx_effect L@retrigger(wave_length=1/8)" in text
+    assert compile_draft(text)[0]["audio"] == chart["audio"]
+
+
+@pytest.mark.parametrize("body, message", [
+    ("0 A@gate", "Only FX notes"),
+    ("0 L~1@nosuch", "Unknown FX effect"),
+    ("0 L@clap(speed=1)", "only take vol"),
+    ("0 L@nosound", "Unknown FX key sound"),
+    ("0 laser_effect nosuch", "Unknown laser effect"),
+    ("1 fx_effect L@gate", "inside a long FX note"),
+])
+def test_effect_errors(body, message):
+    _, errors = compile_draft(f"title: T\nbpm: 120\n@m0\n{body}")
+    assert any(message in e.message for e in errors), errors

@@ -15,6 +15,9 @@ FX_LANES = ["L", "R"]
 JACK_MIN_SEC = 0.075         # same-lane repeats faster than this are hard to hit cleanly
 SHORT_LONG_BEATS = Fraction(1, 8)
 MAX_PEAK_WINDOW_SEC = 2.0
+# K-Shoot MANIA v2 (Judgment/JudgmentDefines.hpp): from this BPM, holds and lasers tick
+# every 8th instead of every 16th.
+HALVE_CHAIN_BPM = 256.0
 
 
 @dataclass
@@ -213,10 +216,41 @@ def stats(chart: dict) -> dict:
         "avg_nps": round((chips + slams) / span, 2),
         "peak_nps": round(peak / MAX_PEAK_WINDOW_SEC, 2),
         "laser_ratio": round(sum(timing.pulse_to_sec(b) - timing.pulse_to_sec(a) for _, a, b, _ in lasers) / span, 2),
+        "chains": len(chain_ticks(chart)),
     }
     s.update(_complexity(chart, timing, events, span))
     s["level_estimate"] = estimate_level(s)
     return s
+
+
+def chain_ticks(chart: dict) -> list[int]:
+    """Pulses of every chain (combo) event, counted as K-Shoot MANIA v2 does
+    (Judgment/ButtonLaneJudgment.cpp, LaserLaneJudgment.cpp)."""
+    ticks = []
+    for _, _, y, length in _button_events(chart):
+        step = 120 if _bpm_at(chart, y) >= HALVE_CHAIN_BPM else 60
+        if length == 0:
+            ticks.append(y)
+        elif length < step * 2:
+            ticks.append(y)
+        elif length <= step * 3:
+            ticks.append(y + step)
+        else:
+            # skip the first grid tick after the start; the last one stands for the end
+            ticks += range(((y + step - 1) // step + 1) * step, y + length - step, step)
+    for sections in chart.get("note", {}).get("laser", []):
+        for y, points, *_ in sections:
+            pts = [(y + ry, *_value(v)) for ry, v, *_ in points]
+            ticks += [ya for ya, va, vfa in pts if va != vfa]
+            for (ya, va, vfa), (yb, vb, _) in zip(pts, pts[1:]):
+                start = ya
+                if va != vfa:
+                    if vb == vfa and yb - ya <= 30:   # the slam's own landing point
+                        continue
+                    start += 30                        # no line ticks within a 32nd after a slam
+                step = 120 if _bpm_at(chart, start) >= HALVE_CHAIN_BPM else 60
+                ticks += range((start + step - 1) // step * step, yb, step)
+    return sorted(ticks)
 
 
 def _complexity(chart, timing, events, span):
