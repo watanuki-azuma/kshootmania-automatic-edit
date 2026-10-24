@@ -27,6 +27,7 @@ body {
 .diff .level { font-size: 2.1rem; font-weight: 700; }
 .stage { position: relative; flex: 1 1 auto; min-height: 280px; border-radius: 10px; overflow: hidden; background: #070810; border: 1px solid var(--line); }
 canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#field3d { position: absolute; inset: 0; background: radial-gradient(120% 70% at 50% 15%, #1d2140, #070810 70%); }
 .hud { position: absolute; inset: 8px 10px auto; display: flex; justify-content: space-between; font-family: var(--display); font-size: .8rem; color: var(--muted); pointer-events: none; font-variant-numeric: tabular-nums; }
 .hud b { color: var(--fg); font-weight: 700; }
 .combo { position: absolute; left: 0; right: 0; top: 34%; text-align: center; font-family: var(--display); pointer-events: none; opacity: .9; }
@@ -58,6 +59,7 @@ input[type=range] { accent-color: var(--accent); }
   </header>
   <div class="stage" id="stage">
     <canvas id="field" aria-label="Chart playfield"></canvas>
+    <canvas id="field3d" aria-label="Chart playfield (3D)" hidden></canvas>
     <div class="hud"><span>BPM <b id="bpm">-</b></span><span>m<b id="measure">0</b></span><span>CHAIN <b id="chain">0</b> / <span id="total">0</span></span></div>
     <div class="combo" id="combo" hidden><div class="n" id="combo-n">0</div><div class="l">CHAIN</div></div>
     <div class="overlay" id="overlay"><button class="primary" id="start">▶ PLAY</button></div>
@@ -67,6 +69,7 @@ input[type=range] { accent-color: var(--accent); }
     <div class="row">
       <button id="play" class="primary">▶ PLAY</button>
       <button id="back" title="4 measures back">−4</button>
+      <label>表示 <select id="view"><option value="3d" selected>KSM 風（3D）</option><option value="flat">平面</option></select></label>
       <label>HI-SPEED <input id="hispeed" type="range" min="3" max="12" step="0.5" value="6.5"></label>
       <label>速度 <select id="rate"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1.0×</option></select></label>
       <label><input id="assist" type="checkbox"> アシスト音</label>
@@ -104,11 +107,11 @@ const offset = (chart.audio?.bgm?.offset || 0) / 1000;
 // ---- notes as seconds
 const notes = [];   // {kind:'bt'|'fx', lane, t0, t1}
 for (const kind of ['bt', 'fx']) (chart.note?.[kind] || []).forEach((lane, i) => lane.forEach(n => {
-  const [y, l] = typeof n === 'number' ? [n, 0] : n; notes.push({kind, lane: i, t0: pulseToSec(y), t1: pulseToSec(y + l), long: l > 0});
+  const [y, l] = typeof n === 'number' ? [n, 0] : n; notes.push({kind, lane: i, y0: y, y1: y + l, t0: pulseToSec(y), t1: pulseToSec(y + l), long: l > 0});
 }));
 const lasers = [];  // {side, wide, pts:[{t, a, b}]}
 (chart.note?.laser || []).forEach((lane, side) => lane.forEach(([start, points, width]) => {
-  lasers.push({side, wide: width === 2, pts: points.map(([ry, v]) => { const [a, b] = Array.isArray(v) ? v : [v, v]; return {t: pulseToSec(start + ry), a, b}; })});
+  lasers.push({side, wide: width === 2, pts: points.map(([ry, v]) => { const [a, b] = Array.isArray(v) ? v : [v, v]; return {y: start + ry, t: pulseToSec(start + ry), a, b}; })});
 }));
 const chainEvents = [];
 for (const n of notes) chainEvents.push(n.t0);
@@ -197,6 +200,7 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 function frame() {
   const t = playing ? now() : chartTime;
   if (playing && t > lastSec) { pause(); }
+  if (view3d && gl) { draw3d(t); afterDraw(t); requestAnimationFrame(frame); return; }
   const speed = +$('hispeed').value * 60;            // px per second
   const judge = H - 70, laneW = Math.min(64, (W - 120) / 4), left = (W - laneW * 4) / 2, trackW = laneW * 4;
   const y = s => judge - (s - t) * speed;
@@ -258,6 +262,11 @@ function frame() {
   g.fillStyle = '#b9a2ff'; g.fillRect(left - laneW / 2, judge - 1, trackW + laneW, 3);
   g.fillStyle = '#b9a2ff30'; g.fillRect(left - laneW / 2, judge - 8, trackW + laneW, 16);
 
+  afterDraw(t);
+  requestAnimationFrame(frame);
+}
+
+function afterDraw(t) {
   // hits, chain, ticks
   if (playing) {
     for (const n of notes) if (n.t0 > lastTick && n.t0 <= t) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = 1;
@@ -276,7 +285,147 @@ function frame() {
   $('measure').textContent = Math.max(0, pulseToMeasure(Math.max(0, secToPulseApprox(t))));
   const tt = Math.max(0, t); $('time').textContent = `${Math.floor(tt / 60)}:${String(Math.floor(tt % 60)).padStart(2, '0')}`;
   if (playing) $('seek').value = Math.round(Math.max(0, t) / lastSec * 1000);
-  requestAnimationFrame(frame);
+}
+
+// ---- KSM-style 3D view, following K-Shoot MANIA v2 (MIT): notes are drawn in 2D onto a
+// 512x1024 highway texture (Highway3DGraphics::draw2D), which is mapped onto a plane seen by a
+// perspective camera (GraphicsMain: FOV 45deg, eye (0,45,-366), looking 15deg down) and tilted
+// around the view axis by the lasers (HighwayTiltAuto).
+const TEX_W = 512, TEX_H = 1024, JDG_Y = TEX_H - 14, OFF_X = 128;
+const tex = document.createElement('canvas'); tex.width = TEX_W; tex.height = TEX_H;
+const tg = tex.getContext('2d');
+const cv3 = $('field3d');
+const gl = cv3.getContext('webgl', {alpha: true, premultipliedAlpha: false});
+let view3d = true, glProg = null, glBuf = null, glTex = null, tilt = 0, tiltAt = 0;
+const stdBpm = chart.beat.bpm[0][1];
+const laneX = (kind, i) => OFF_X + 44 + (kind === 'bt' ? 42 : 84) * i;
+const chipH = y => { const tbl = [14, 19, 23, 26, 28, 30, 32, 35], r = (TEX_H - y) / TEX_H * 8, i = Math.floor(r), k = r - i;
+  const at = j => tbl[Math.max(0, Math.min(7, j))]; return Math.round(at(i) + (at(i + 1) - at(i)) * k); };
+const laserX = (v, wide) => wide ? (v * (256 - 48) + 24) * 2 : OFF_X + v * (256 - 48) + 24;
+if (gl) {
+  const sh = (type, src) => { const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o); return o; };
+  glProg = gl.createProgram();
+  gl.attachShader(glProg, sh(gl.VERTEX_SHADER, 'attribute vec4 clip; attribute vec2 uv; varying vec2 v; void main(){ v = uv; gl_Position = clip; }'));
+  gl.attachShader(glProg, sh(gl.FRAGMENT_SHADER, 'precision mediump float; varying vec2 v; uniform sampler2D t; void main(){ gl_FragColor = texture2D(t, v); }'));
+  gl.linkProgram(glProg); glBuf = gl.createBuffer(); glTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, glTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+  if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+}
+function setView(v) { view3d = v === '3d' && !!gl; cv3.hidden = !view3d; cv.style.visibility = view3d ? 'hidden' : ''; }
+$('view').onchange = e => { setView(e.target.value); try { localStorage.setItem('ksmauto-preview-view', e.target.value); } catch (err) {} };
+try { const v = localStorage.getItem('ksmauto-preview-view'); if (v) $('view').value = v; } catch (e) {}
+if (!gl) { $('view').value = 'flat'; $('view').disabled = true; }
+setView($('view').value);
+
+function laserValueAt(l, y) {   // value under pulse y, or null outside the section
+  const p = l.pts; if (y < p[0].y || y > p.at(-1).y) return null;
+  for (let i = 0; i + 1 < p.length; i++) if (p[i].y <= y && y <= p[i + 1].y) return p[i].b + (p[i + 1].a - p[i].b) * (y - p[i].y) / Math.max(1, p[i + 1].y - p[i].y);
+  return p.at(-1).b;
+}
+function updateTilt(y, dt) {     // HighwayTiltAuto: lasers pull the tilt factor; it chases at 4.5/s
+  let target = 0;
+  for (const l of lasers) {
+    let v = laserValueAt(l, y);
+    if (v === null && l.pts[0].y > y && l.pts[0].y <= y + 480) v = l.pts[0].a;   // lean in half a measure early
+    if (v !== null) target += l.side === 0 ? v : -(1 - v);
+  }
+  let speed = 4.5; const diff = Math.abs(target - tilt);
+  if (diff < 0.1) speed *= diff / 0.1; if (Math.abs(target) < 0.001) speed /= 5; speed = Math.max(speed, 0.5);
+  tilt = tilt < target ? Math.min(tilt + dt * speed, target) : Math.max(tilt - dt * speed, target);
+}
+
+function drawHighwayTexture(t) {
+  const cur = secToPulseApprox(t), ppp = 540 / 960 * (+$('hispeed').value * 100) / stdBpm;  // px per pulse
+  const Y = p => JDG_Y - (p - cur) * ppp;
+  const visible = (a, b) => Y(b) < TEX_H + 40 && Y(a) > -60;
+  tg.globalCompositeOperation = 'source-over';
+  tg.clearRect(0, 0, TEX_W, TEX_H);   // outside the 256px track stays clear (wide lasers only)
+  tg.fillStyle = '#000'; tg.fillRect(OFF_X, 0, 256, TEX_H);
+  // base: laser rails outside the BT lanes, dark lanes with separators
+  const rail = (x, c) => { const gr = tg.createLinearGradient(0, 0, 0, TEX_H); gr.addColorStop(0, c + '10'); gr.addColorStop(1, c + '55'); tg.fillStyle = gr; tg.fillRect(x, 0, 40, TEX_H); };
+  rail(OFF_X + 4, '#1aa6ff'); rail(OFF_X + 212, '#ff2fb0');
+  tg.fillStyle = '#0d0f1c'; tg.fillRect(OFF_X + 44, 0, 168, TEX_H);
+  tg.fillStyle = '#ffffff'; tg.fillRect(OFF_X + 42, 0, 2, TEX_H); tg.fillRect(OFF_X + 212, 0, 2, TEX_H);
+  tg.fillStyle = '#3a4060'; for (let i = 1; i < 4; i++) tg.fillRect(OFF_X + 43 + 42 * i, 0, 1, TEX_H);
+  // bar lines
+  const m0 = Math.max(0, pulseToMeasure(Math.max(0, cur)) - 1);
+  tg.fillStyle = 'rgb(110,110,110)';
+  for (let m = m0; m < m0 + 50; m++) { const y = Y(measureToPulse(m)); if (y < -20) break; if (y < TEX_H) tg.fillRect(OFF_X + 32, y - 1, 192, 2); }
+  // key beams
+  for (let i = 0; i < 6; i++) if (flash[i] > 0) {
+    const x = i < 4 ? laneX('bt', i) : laneX('fx', i - 4), w = i < 4 ? 40 : 82;
+    const gr = tg.createLinearGradient(0, JDG_Y - 300, 0, JDG_Y); gr.addColorStop(0, '#ffffff00');
+    gr.addColorStop(1, i < 4 ? `rgba(160,200,255,${flash[i] * 0.5})` : `rgba(255,160,60,${flash[i] * 0.5})`);
+    tg.fillStyle = gr; tg.fillRect(x, JDG_Y - 300, w, 300);
+  }
+  // long notes, then chips (FX under BT)
+  for (const kind of ['fx', 'bt']) for (const n of notes) if (n.kind === kind && n.long && visible(n.y0, n.y1)) {
+    const x = laneX(kind, n.lane), top = Math.max(-10, Y(n.y1)), bottom = Math.min(TEX_H, Y(n.y0));
+    tg.fillStyle = kind === 'fx' ? 'rgba(255,150,40,0.75)' : 'rgba(235,240,255,0.85)';
+    tg.fillRect(kind === 'fx' ? x + 4 : x + 4, top, kind === 'fx' ? 74 : 32, bottom - top);
+  }
+  for (const kind of ['fx', 'bt']) for (const n of notes) if (n.kind === kind && !n.long && visible(n.y0, n.y0)) {
+    const y = Y(n.y0), h = chipH(y), x = laneX(kind, n.lane);
+    tg.fillStyle = kind === 'fx' ? '#ff9a2e' : '#f6f8ff'; tg.fillRect(x, y - h / 2, kind === 'fx' ? 82 : 40, h);
+    tg.fillStyle = kind === 'fx' ? '#ffd29a' : '#ffffff'; tg.fillRect(x, y - h / 2, kind === 'fx' ? 82 : 40, 3);
+  }
+  // lasers (additive, like the v2 renderer); a slam pushes the rest of the section up by its height
+  tg.globalCompositeOperation = 'lighter';
+  const slamH = Math.min(48, Math.round(30 * ppp));
+  for (const l of lasers) {
+    const p = l.pts; if (!visible(p[0].y, p.at(-1).y + 120)) continue;
+    tg.fillStyle = l.side ? 'rgba(255,40,170,0.72)' : 'rgba(20,150,255,0.72)';
+    const quad = (x0, y0, x1, y1) => { tg.beginPath(); tg.moveTo(x0 - 24, y0); tg.lineTo(x0 + 24, y0); tg.lineTo(x1 + 24, y1); tg.lineTo(x1 - 24, y1); tg.fill(); };
+    for (let i = 0; i < p.length; i++) {
+      const y = Y(p[i].y), slam = p[i].a !== p[i].b, ys = slam ? y - slamH : y;
+      if (slam) { const xa = laserX(p[i].a, l.wide), xb = laserX(p[i].b, l.wide); tg.fillRect(Math.min(xa, xb) - 24, y - slamH, Math.abs(xb - xa) + 48, slamH); }
+      if (i + 1 < p.length) quad(laserX(p[i].b, l.wide), ys, laserX(p[i + 1].a, l.wide), Y(p[i + 1].y));
+      else if (slam) quad(laserX(p[i].b, l.wide), ys, laserX(p[i].b, l.wide), ys - Math.min(80, 60 * ppp));   // tail
+    }
+  }
+  tg.globalCompositeOperation = 'source-over';
+  // judgment line and laser cursors
+  tg.fillStyle = '#ffe9a8'; tg.fillRect(OFF_X + 36, JDG_Y - 3, 184, 6);
+  tg.fillStyle = 'rgba(255,220,140,0.25)'; tg.fillRect(OFF_X + 36, JDG_Y - 12, 184, 24);
+  for (const l of lasers) { const v = laserValueAt(l, cur); if (v === null) continue;
+    const x = laserX(v, l.wide); tg.fillStyle = l.side ? '#ff6ccc' : '#5cc8ff';
+    tg.beginPath(); tg.moveTo(x, JDG_Y - 18); tg.lineTo(x - 11, JDG_Y + 4); tg.lineTo(x + 11, JDG_Y + 4); tg.fill(); }
+  return cur;
+}
+
+function draw3d(t) {
+  const r = cv3.getBoundingClientRect(), d = devicePixelRatio || 1;
+  if (cv3.width !== Math.round(r.width * d) || cv3.height !== Math.round(r.height * d)) { cv3.width = Math.round(r.width * d); cv3.height = Math.round(r.height * d); }
+  const cur = drawHighwayTexture(t);
+  const nowMs = performance.now(); updateTilt(cur, Math.min(0.1, (nowMs - (tiltAt || nowMs)) / 1000)); tiltAt = nowMs;
+  if (!playing) tilt = 0;
+  // plane (wide texture): x +-46.77, near edge z -304.2 (8.3 below the judgment line), far edge z 300.1
+  const halfW = 304 * 2 / 13, planeH = 936 * 13 / 20, below = planeH * 14 / TEX_H, above = planeH - below;
+  const corners = [[-halfW, 0, above / 2, 0, 0], [halfW, 0, above / 2, 1, 0], [-halfW, 0, -above / 2 - below / 2, 0, 1], [halfW, 0, -above / 2 - below / 2, 1, 1]];
+  const th = tilt * 10 * Math.PI / 180, c = Math.cos(th), s = Math.sin(th);     // clockwise as seen from the camera
+  const eye = [0, 45, -366], f = [0, -Math.sin(Math.PI / 12), Math.cos(Math.PI / 12)], u = [0, f[2], -f[1]];
+  const fy = 1 / Math.tan(Math.PI / 8), aspect = cv3.width / cv3.height;
+  const data = [];
+  for (const [x, y, z, uu, vv] of corners) {
+    const dx = x, dy = y - 42, px = dx * c + dy * s, py = 42 - dx * s + dy * c;   // TiltTransformMatrix around (0,42,0)
+    const q = [px - eye[0], py - eye[1], z - eye[2]];
+    const cx = q[0], cy = q[0] * u[0] + q[1] * u[1] + q[2] * u[2], cz = q[0] * f[0] + q[1] * f[1] + q[2] * f[2];
+    data.push(cx * fy / aspect, cy * fy, 0, cz, uu, vv);
+  }
+  gl.viewport(0, 0, cv3.width, cv3.height); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(glProg);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glBuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
+  const aClip = gl.getAttribLocation(glProg, 'clip'), aUv = gl.getAttribLocation(glProg, 'uv');
+  gl.enableVertexAttribArray(aClip); gl.vertexAttribPointer(aClip, 4, gl.FLOAT, false, 24, 0);
+  gl.enableVertexAttribArray(aUv); gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 24, 16);
+  gl.bindTexture(gl.TEXTURE_2D, glTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tex); gl.generateMipmap(gl.TEXTURE_2D);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  for (let i = 0; i < 6; i++) if (flash[i] > 0) flash[i] = reduceMotion ? 0 : flash[i] - 0.08;
 }
 resize(); requestAnimationFrame(frame);
 </script>
