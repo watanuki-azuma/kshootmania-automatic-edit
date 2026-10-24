@@ -34,7 +34,7 @@ uv run pytest
 | `ksmauto validate FILE` / `ksmauto info FILE` | KSON 構造検証 / 概要 |
 | `ksmauto edit chart.kson --audio SONG.ogg` | ブラウザで同期再生・手修正 |
 | `ksmauto preview FILE [--audio SONG] -o preview.html` | 譜面と音源を埋め込んだ単体 HTML ビューア（サーバー不要。共有用）。KSM v2 に基づくカメラ・スクロールと 2D/3D 表示、FX・レーザーの音声エフェクトと FX キー音の近似再生。直角音は既定オン（合成音、up/down/swing/mute・音量変化・幅による自動音量に対応） |
-| `ksmauto viewer -o viewer.html` | 譜面を含まない単体 HTML ビューア。KSON / KSH と音源をファイル選択・ドロップで開き、再読み込みせずに切替。フォルダー内の音源は BGM ファイル名で照合（音源が 1 件ならそれを使用）。外部通信不要 |
+| `ksmauto viewer -o viewer.html` | 譜面を含まない単体 HTML ビューア。KSON / KSH と音源をファイル選択・ドロップで開き、再読み込みせずに切替。フォルダー内の音源は BGM ファイル名で照合（音源が 1 件ならそれを使用）。外部通信不要。GitHub Pages 版: https://watanuki-azuma.github.io/ksm-web-viewer/ （[ksm-web-viewer](https://github.com/watanuki-azuma/ksm-web-viewer) にこのコマンドの出力を置いている） |
 | `ksmauto sdvxin DIR [-o x.kson]` / `ksmauto sdvxin --report ROOT` | 手元に取得した sdvx.in 譜面（JSON / 画像レイヤー）を KSON に復元 / 公表ノーツ数と照合 |
 
 `FILE` は `.kson` / `.ksh` / `.ksmd` のどれでもよい。
@@ -75,3 +75,7 @@ sdvx.in の公表チェイン数は SDVX の数え方で、ロングの数え方
 `uv run python tests/eval/eval_analyze.py`: BPM 10/10、拍の位相 9/10、小節頭 8/10。
 `uv run python tests/eval/fit_level.py`: レベル推定の平均誤差 0.7（公式 36 譜面）、0.7（sdvx.in Lv17〜20 の 1607 譜面、手元にある場合）。
 `uv run python tests/eval/sdvxin_patterns.py`: 手元の sdvx.in 譜面から配置パターン（レーザー中の空き手のレーン、16 分の形など）を集計。`--chart` で自作譜面も同じ集計にかけられる。
+
+## ライセンス表記
+
+プレビュー・ビューアの一部は K-Shoot MANIA v2 / libkson（MIT）の実装を参考にしている。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照。
