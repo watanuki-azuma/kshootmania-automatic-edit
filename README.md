@@ -1,0 +1,1 @@
+# kshootmania-automatic-edit
