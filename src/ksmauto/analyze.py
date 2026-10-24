@@ -100,10 +100,13 @@ def _top_note(rise: np.ndarray, frame: int) -> int:
     return int(np.flatnonzero(peaks)[-1])
 
 
-def _notes_track(notes: list, frames: int) -> tuple:
-    """Onsets (chords merged), their top note and sounding frames from transcribed notes."""
+def _notes_track(notes: list, gate: np.ndarray) -> tuple:
+    """Onsets (chords merged), their top note and sounding frames from transcribed notes.
+
+    Like the other stems, notes that start where the stem is quiet (`gate` False) are dropped.
+    """
     fps = SR / HOP
-    notes = sorted(notes)
+    notes = sorted(n for n in notes if int(n[0] * fps) < len(gate) and gate[int(n[0] * fps)])
     groups = []
     for onset, offset, midi, velocity in notes:
         # An octave over a note that sounds at that moment is a doubling (or an overtone the
@@ -116,9 +119,10 @@ def _notes_track(notes: list, frames: int) -> tuple:
         else:
             groups.append([onset, velocity, midi])
     loud = np.percentile([g[1] for g in groups], 90) if groups else 1.0
-    active = np.zeros(frames, dtype=bool)
+    active = np.zeros(len(gate), dtype=bool)
     for onset, offset, _, _ in notes:
         active[int(onset * fps):int(offset * fps) + 1] = True
+    active &= gate
     times = np.array([g[0] for g in groups])
     return (times, np.clip([g[1] / loud for g in groups], 0, 1)), np.array([float(g[2]) for g in groups]), active
 
@@ -451,7 +455,7 @@ def _stem_tracks(stems_dir: Path, period: float) -> dict:
     for row in LANE_ROWS:
         notes_path = stems_dir / f"{row}.notes.json"
         if row in rows and notes_path.exists():
-            peaks[row], pitches, active[row] = _notes_track(json.loads(notes_path.read_text()), len(active[row]))
+            peaks[row], pitches, active[row] = _notes_track(json.loads(notes_path.read_text()), active[row])
             lane_pitch[row] = (peaks[row][0], pitches)
         elif row in rows:
             envs[row], attacks[row] = _note_flux(loaded[row][0])

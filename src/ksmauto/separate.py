@@ -29,6 +29,11 @@ def separate(audio: str | Path, out_dir: str | Path, python: str | None = None, 
                        check=True)
         src = Path(tmp) / model / audio.stem
         out_dir.mkdir(parents=True, exist_ok=True)
+        # Stems and transcriptions left from an earlier run would be read as this song's.
+        for name in set(MODELS["htdemucs_6s"]) - set(MODELS[model]):
+            (out_dir / f"{name}.wav").unlink(missing_ok=True)
+        for path in out_dir.glob("*.notes.json"):
+            path.unlink()
         paths = {}
         for name in MODELS[model]:
             paths[name] = out_dir / f"{name}.wav"
