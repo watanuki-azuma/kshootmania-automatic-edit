@@ -160,7 +160,8 @@ def _lint_against_audio(chart, timing, events, analysis):
     for m in analysis["measures"]:
         den = analysis["tempo"]["time_sig"][1]
         base = timing.measure_to_pulse(m["index"])
-        for b, _ in m["onsets"]["all"]:
+        # A kick may only show up in the low band, a hat only in the high band.
+        for b, _ in (o for band in m["onsets"].values() for o in band):
             onset_pulses.add(int(round(base + b * 960 / den)))
     unaligned = []
     for kind, lane, y, length in events:

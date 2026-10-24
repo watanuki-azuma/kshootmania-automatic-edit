@@ -1,0 +1,256 @@
+<title>__TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap">
+<style>
+/* Layout: one screen — chart card on top, playfield in the middle, transport below. A night arcade cabinet, dark only. */
+:root {
+  --bg: #0b0d16; --panel: #141828; --line: #2a3150; --fg: #e8ecf8; --muted: #8b93b3;
+  --bt: #f4f6ff; --fx: #ff9a2e; --laser-l: #2fd3ff; --laser-r: #ff4fb8; --accent: #b9a2ff;
+  --display: "Chakra Petch", "Zen Kaku Gothic New", system-ui, sans-serif;
+  --body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px; box-sizing: border-box; display: flex; justify-content: center;
+}
+.app { width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 10px; min-height: 0; height: 100%; }
+.card { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: end; }
+.card h1 { margin: 0; font-size: 1.15rem; font-weight: 700; line-height: 1.3; text-wrap: balance; min-width: 0; }
+.card .artist { color: var(--muted); font-size: .85rem; grid-column: 1; }
+.diff { grid-row: 1 / span 2; grid-column: 2; font-family: var(--display); text-align: right; line-height: 1; }
+.diff .name { font-size: .75rem; letter-spacing: .14em; color: var(--accent); }
+.diff .level { font-size: 2.1rem; font-weight: 700; }
+.stage { position: relative; flex: 1 1 auto; min-height: 280px; border-radius: 10px; overflow: hidden; background: #070810; border: 1px solid var(--line); }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.hud { position: absolute; inset: 8px 10px auto; display: flex; justify-content: space-between; font-family: var(--display); font-size: .8rem; color: var(--muted); pointer-events: none; font-variant-numeric: tabular-nums; }
+.hud b { color: var(--fg); font-weight: 700; }
+.combo { position: absolute; left: 0; right: 0; top: 34%; text-align: center; font-family: var(--display); pointer-events: none; opacity: .9; }
+.combo .n { font-size: 2.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.combo .l { font-size: .7rem; letter-spacing: .3em; color: var(--muted); }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: #070810b0; }
+.overlay button { font-size: 1.05rem; padding: 14px 28px; }
+.transport { display: grid; gap: 8px; }
+.seek { position: relative; height: 26px; }
+.seek input { width: 100%; margin: 0; position: absolute; inset: 0; height: 26px; }
+.marks { position: absolute; inset: 0; pointer-events: none; }
+.marks span { position: absolute; top: 0; height: 6px; width: 1px; background: var(--accent); }
+.marks em { position: absolute; top: 18px; font-size: .62rem; font-style: normal; color: var(--muted); transform: translateX(-2px); white-space: nowrap; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: .85rem; color: var(--muted); }
+.row label { display: flex; align-items: center; gap: 6px; }
+button, select { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+button.primary { background: var(--accent); color: #12101e; border-color: var(--accent); font-weight: 700; font-family: var(--display); letter-spacing: .06em; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=range] { accent-color: var(--accent); }
+.time { font-family: var(--display); font-variant-numeric: tabular-nums; color: var(--fg); margin-left: auto; }
+.note { font-size: .72rem; color: var(--muted); margin: 0; }
+</style>
+
+<div class="app">
+  <header class="card">
+    <h1 id="title"></h1>
+    <div class="diff"><div class="name" id="diffname"></div><div class="level" id="level"></div></div>
+    <div class="artist" id="artist"></div>
+  </header>
+  <div class="stage" id="stage">
+    <canvas id="field" aria-label="Chart playfield"></canvas>
+    <div class="hud"><span>BPM <b id="bpm">-</b></span><span>m<b id="measure">0</b></span><span>CHAIN <b id="chain">0</b> / <span id="total">0</span></span></div>
+    <div class="combo" id="combo" hidden><div class="n" id="combo-n">0</div><div class="l">CHAIN</div></div>
+    <div class="overlay" id="overlay"><button class="primary" id="start">▶ PLAY</button></div>
+  </div>
+  <div class="transport">
+    <div class="seek"><input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek"><div class="marks" id="marks"></div></div>
+    <div class="row">
+      <button id="play" class="primary">▶ PLAY</button>
+      <button id="back" title="4 measures back">−4</button>
+      <label>HI-SPEED <input id="hispeed" type="range" min="3" max="12" step="0.5" value="6.5"></label>
+      <label>速度 <select id="rate"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1.0×</option></select></label>
+      <label><input id="assist" type="checkbox"> アシスト音</label>
+      <span class="time" id="time">0:00</span>
+    </div>
+    <p class="note" id="srcnote"></p>
+  </div>
+</div>
+<audio id="audio" preload="auto"></audio>
+
+<script id="chart-data" type="application/json">__CHART_JSON__</script>
+<script>
+const chart = JSON.parse(document.getElementById('chart-data').textContent);
+const AUDIO_SRC = "__AUDIO_SRC__";
+const audio = document.getElementById('audio');
+const hasAudio = AUDIO_SRC.length > 0;
+if (hasAudio) audio.src = AUDIO_SRC;
+const $ = id => document.getElementById(id);
+
+// ---- timing (pulses: 240 per beat, 960 per 4/4 measure)
+const bpms = [];
+{ let sec = 0, prev = 0, bpm = chart.beat.bpm[0][1];
+  for (const [p, b] of chart.beat.bpm) { sec += (p - prev) * 60 / (240 * bpm); bpms.push([p, sec, b]); prev = p; bpm = b; } }
+const pulseToSec = p => { let e = bpms[0]; for (const x of bpms) if (x[0] <= p) e = x; return e[1] + (p - e[0]) * 60 / (240 * e[2]); };
+const bpmAtSec = s => { let b = bpms[0][2]; for (const x of bpms) if (x[1] <= s) b = x[2]; return b; };
+const sigs = []; { const src = chart.beat.time_sig?.length ? chart.beat.time_sig : [[0, [4, 4]]];
+  let pulse = 0, m = 0, len = 960; for (const [mm, [n, d]] of src) { pulse += (mm - m) * len; len = 960 * n / d; sigs.push([mm, pulse, len]); m = mm; } }
+const measureToPulse = m => { let e = sigs[0]; for (const x of sigs) if (x[0] <= m) e = x; return e[1] + (m - e[0]) * e[2]; };
+const pulseToMeasure = p => { let e = sigs[0]; for (const x of sigs) if (x[1] <= p) e = x; return e[0] + Math.floor((p - e[1]) / e[2]); };
+const offset = (chart.audio?.bgm?.offset || 0) / 1000;
+
+// ---- notes as seconds
+const notes = [];   // {kind:'bt'|'fx', lane, t0, t1}
+for (const kind of ['bt', 'fx']) (chart.note?.[kind] || []).forEach((lane, i) => lane.forEach(n => {
+  const [y, l] = typeof n === 'number' ? [n, 0] : n; notes.push({kind, lane: i, t0: pulseToSec(y), t1: pulseToSec(y + l), long: l > 0});
+}));
+const lasers = [];  // {side, wide, pts:[{t, a, b}]}
+(chart.note?.laser || []).forEach((lane, side) => lane.forEach(([start, points, width]) => {
+  lasers.push({side, wide: width === 2, pts: points.map(([ry, v]) => { const [a, b] = Array.isArray(v) ? v : [v, v]; return {t: pulseToSec(start + ry), a, b}; })});
+}));
+const chainEvents = [];
+for (const n of notes) chainEvents.push(n.t0);
+for (const l of lasers) for (const p of l.pts) if (p.a !== p.b) chainEvents.push(p.t);
+chainEvents.sort((a, b) => a - b);
+const lastSec = Math.max(...notes.map(n => n.t1), ...lasers.map(l => l.pts.at(-1).t), 1) + 2;
+$('total').textContent = chainEvents.length;
+
+// ---- metadata
+const meta = chart.meta || {};
+$('title').textContent = meta.title || 'Untitled'; $('artist').textContent = meta.artist || '';
+const DIFF = ['LIGHT', 'CHALLENGE', 'EXHAUST', 'INFINITE'];
+$('diffname').textContent = typeof meta.difficulty === 'number' ? DIFF[meta.difficulty] || '' : (meta.difficulty || '');
+$('level').textContent = meta.level ?? '';
+$('srcnote').textContent = `${meta.chart_author ? '譜面: ' + meta.chart_author + ' · ' : ''}ノーツ ${notes.length} · 直角 ${chainEvents.length - notes.length}` + (hasAudio ? '' : ' · 音源なし（無音で再生）');
+
+// ---- clock: audio is the master; without audio a virtual clock runs
+let playing = false, rate = 1, virtualStart = 0, virtualAt = 0, chartTime = -1;
+const now = () => {
+  if (!playing) return chartTime;
+  if (hasAudio) return audio.currentTime - offset;
+  return virtualStart + (performance.now() - virtualAt) / 1000 * rate;
+};
+async function play() {
+  if (playing) return;
+  playing = true; $('overlay').hidden = true; $('play').textContent = '❚❚ PAUSE';
+  if (hasAudio) { audio.playbackRate = rate; audio.currentTime = Math.max(0, chartTime + offset); try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') { pause(); $('overlay').hidden = false; } } }
+  else { virtualStart = chartTime; virtualAt = performance.now(); }
+  ensureSound();
+}
+function pause() { chartTime = now(); playing = false; audio.pause(); $('play').textContent = '▶ PLAY'; }
+function seekTo(t) { const was = playing; if (was) pause(); chartTime = Math.max(-1, Math.min(lastSec, t)); lastTick = chartTime; if (hasAudio) audio.currentTime = Math.max(0, chartTime + offset); if (was) play(); }
+audio.addEventListener('ended', () => { pause(); chartTime = -1; $('overlay').hidden = false; });
+$('start').onclick = play;
+$('play').onclick = () => playing ? pause() : play();
+$('back').onclick = () => { const m = Math.max(0, pulseToMeasure(Math.max(0, secToPulseApprox(now()))) - 4); seekTo(pulseToSec(measureToPulse(m))); };
+$('rate').onchange = e => { const was = playing; if (was) pause(); rate = +e.target.value; audio.playbackRate = rate; if (was) play(); };
+$('seek').oninput = e => seekTo(e.target.value / 1000 * lastSec);
+document.addEventListener('keydown', e => { if (e.code === 'Space' && e.target.tagName !== 'SELECT') { e.preventDefault(); playing ? pause() : play(); } });
+function secToPulseApprox(s) { let e = bpms[0]; for (const x of bpms) if (x[1] <= s) e = x; return e[0] + (s - e[1]) * 240 * e[2] / 60; }
+
+// section markers from editor comments
+// Labels need room; a crowded marker keeps only its tick (the name stays in its tooltip).
+let lastLabel = -100;
+for (const [p, text] of chart.editor?.comment || []) {
+  const pct = pulseToSec(p) / lastSec * 100, s = document.createElement('span');
+  s.style.left = pct + '%'; s.title = text; $('marks').append(s);
+  if (pct - lastLabel >= 11) { const em = document.createElement('em'); em.style.left = pct + '%'; em.textContent = text; $('marks').append(em); lastLabel = pct; }
+}
+
+// ---- assist ticks
+let ctx = null, lastTick = -1;
+function ensureSound() { if (!$('assist').checked) return; ctx ||= new AudioContext(); ctx.resume(); }
+$('assist').onchange = ensureSound;
+function tick(hi) {
+  if (!ctx) return; const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+  o.frequency.value = hi ? 1760 : 1320; g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+  o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.05);
+}
+
+// ---- drawing
+const cv = $('field'), g = cv.getContext('2d');
+let W = 0, H = 0;
+function resize() { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; W = r.width; H = r.height; cv.width = W * d; cv.height = H * d; g.setTransform(d, 0, 0, d, 0, 0); }
+new ResizeObserver(resize).observe(cv);
+const flash = [0, 0, 0, 0, 0, 0];
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function frame() {
+  const t = playing ? now() : chartTime;
+  if (playing && t > lastSec) { pause(); }
+  const speed = +$('hispeed').value * 60;            // px per second
+  const judge = H - 70, laneW = Math.min(64, (W - 120) / 4), left = (W - laneW * 4) / 2, trackW = laneW * 4;
+  const y = s => judge - (s - t) * speed;
+  const ahead = judge / speed, behind = 70 / speed;
+  // laser x: 0..1 spans the BT area plus half a lane each side; 2x lasers span double
+  const lx = (v, wide) => wide ? W / 2 + (v - 0.5) * (trackW + laneW) * 2 : left - laneW / 2 + v * (trackW + laneW);
+
+  g.fillStyle = '#070810'; g.fillRect(0, 0, W, H);
+  // track
+  const grad = g.createLinearGradient(0, 0, 0, H); grad.addColorStop(0, '#0f1222'); grad.addColorStop(1, '#1a1f36');
+  g.fillStyle = grad; g.fillRect(left, 0, trackW, H);
+  g.fillStyle = '#2fd3ff14'; g.fillRect(left - laneW / 2, 0, laneW / 2, H);
+  g.fillStyle = '#ff4fb814'; g.fillRect(left + trackW, 0, laneW / 2, H);
+  g.strokeStyle = '#2a3150'; g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(left + i * laneW, 0); g.lineTo(left + i * laneW, H); g.stroke(); }
+  // bar lines
+  const m0 = Math.max(0, pulseToMeasure(Math.max(0, secToPulseApprox(t - behind))));
+  for (let m = m0; m < m0 + 64; m++) {
+    const s = pulseToSec(measureToPulse(m)); if (s > t + ahead) break;
+    g.strokeStyle = '#ffffff30'; g.beginPath(); g.moveTo(left, y(s)); g.lineTo(left + trackW, y(s)); g.stroke();
+  }
+  // lane flashes
+  for (let i = 0; i < 6; i++) if (flash[i] > 0) {
+    const x = i < 4 ? left + i * laneW : left + (i - 4) * laneW * 2, w = i < 4 ? laneW : laneW * 2;
+    const fg = g.createLinearGradient(0, judge - 120, 0, judge); fg.addColorStop(0, '#ffffff00'); fg.addColorStop(1, i < 4 ? `rgba(220,230,255,${flash[i] * 0.35})` : `rgba(255,154,46,${flash[i] * 0.35})`);
+    g.fillStyle = fg; g.fillRect(x, judge - 120, w, 120); flash[i] = reduceMotion ? 0 : flash[i] - 0.08;
+  }
+  // FX under BT
+  for (const n of notes) if (n.kind === 'fx' && n.t1 >= t - behind && n.t0 <= t + ahead) {
+    const x = left + n.lane * laneW * 2 + 2, w = laneW * 2 - 4;
+    if (n.long) { g.fillStyle = '#ff9a2e70'; g.fillRect(x + 4, y(n.t1), w - 8, y(n.t0) - y(n.t1)); }
+    else { g.fillStyle = '#ff9a2e'; g.fillRect(x, y(n.t0) - 7, w, 8); }
+  }
+  for (const n of notes) if (n.kind === 'bt' && n.t1 >= t - behind && n.t0 <= t + ahead) {
+    const x = left + n.lane * laneW + 4, w = laneW - 8;
+    if (n.long) { g.fillStyle = '#f4f6ffcc'; g.fillRect(x + 3, y(n.t1), w - 6, y(n.t0) - y(n.t1)); }
+    else { g.fillStyle = '#f4f6ff'; g.fillRect(x, y(n.t0) - 6, w, 7); }
+  }
+  // lasers
+  for (const l of lasers) {
+    const pts = l.pts; if (pts.at(-1).t < t - behind || pts[0].t > t + ahead) continue;
+    const color = l.side ? '#ff4fb8' : '#2fd3ff';
+    g.strokeStyle = color + '99'; g.lineWidth = laneW * 0.42; g.lineCap = 'butt'; g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(lx(pts[0].b, l.wide), y(pts[0].t));
+    for (let i = 1; i < pts.length; i++) { g.lineTo(lx(pts[i].a, l.wide), y(pts[i].t)); g.moveTo(lx(pts[i].b, l.wide), y(pts[i].t)); }
+    g.stroke();
+    for (const p of pts) if (p.a !== p.b) {   // slam
+      g.fillStyle = color; const x0 = Math.min(lx(p.a, l.wide), lx(p.b, l.wide)), x1 = Math.max(lx(p.a, l.wide), lx(p.b, l.wide));
+      g.fillRect(x0 - laneW * 0.28, y(p.t) - laneW * 0.3, x1 - x0 + laneW * 0.56, laneW * 0.3);
+    }
+    // cursor on the judgment line
+    if (pts[0].t <= t && t <= pts.at(-1).t) {
+      let v = pts.at(-1).b;
+      for (let i = 0; i + 1 < pts.length; i++) if (pts[i].t <= t && t <= pts[i + 1].t) { const k = (t - pts[i].t) / Math.max(1e-6, pts[i + 1].t - pts[i].t); v = pts[i].b + (pts[i + 1].a - pts[i].b) * k; }
+      g.fillStyle = color; g.beginPath(); g.moveTo(lx(v, l.wide), judge - 14); g.lineTo(lx(v, l.wide) - 9, judge + 6); g.lineTo(lx(v, l.wide) + 9, judge + 6); g.fill();
+    }
+  }
+  // judgment line
+  g.fillStyle = '#b9a2ff'; g.fillRect(left - laneW / 2, judge - 1, trackW + laneW, 3);
+  g.fillStyle = '#b9a2ff30'; g.fillRect(left - laneW / 2, judge - 8, trackW + laneW, 16);
+
+  // hits, chain, ticks
+  if (playing) {
+    for (const n of notes) if (n.t0 > lastTick && n.t0 <= t) { flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = 1; if (ctx && $('assist').checked) tick(n.kind === 'fx'); }
+    for (const n of notes) if (n.long && n.t0 <= t && t <= n.t1) flash[n.kind === 'bt' ? n.lane : 4 + n.lane] = Math.max(flash[n.kind === 'bt' ? n.lane : 4 + n.lane], 0.6);
+    lastTick = t;
+  }
+  let chain = 0; for (const e of chainEvents) { if (e <= t) chain++; else break; }
+  $('chain').textContent = chain; $('combo-n').textContent = chain; $('combo').hidden = !playing || chain === 0;
+  $('bpm').textContent = Math.round(bpmAtSec(Math.max(0, t)) * 10) / 10;
+  $('measure').textContent = Math.max(0, pulseToMeasure(Math.max(0, secToPulseApprox(t))));
+  const tt = Math.max(0, t); $('time').textContent = `${Math.floor(tt / 60)}:${String(Math.floor(tt % 60)).padStart(2, '0')}`;
+  if (playing) $('seek').value = Math.round(Math.max(0, t) / lastSec * 1000);
+  requestAnimationFrame(frame);
+}
+resize(); requestAnimationFrame(frame);
+</script>

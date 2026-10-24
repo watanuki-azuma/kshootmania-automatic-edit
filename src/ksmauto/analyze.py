@@ -186,7 +186,10 @@ def _sections(feat: np.ndarray, n_measures: int) -> list[dict]:
     return [{"start": s, "end": e, "label": lab} for (s, e), lab in zip(segs, labels)]
 
 
-def analyze(path: str | Path, beats_per_measure: int = 4) -> dict:
+def analyze(path: str | Path, beats_per_measure: int = 4, tempo: list[list[float]] | None = None,
+            offset_ms: int | None = None) -> dict:
+    """`tempo` ([[measure, bpm], ...]) and `offset_ms` override the estimates, for
+    songs whose tempo changes (the estimator assumes one constant tempo)."""
     path = Path(path)
     y, sr = librosa.load(path, sr=SR, mono=True)
     duration = len(y) / sr
@@ -198,7 +201,12 @@ def analyze(path: str | Path, beats_per_measure: int = 4) -> dict:
     # Percussive-leaning envelope for tempo/phase: kick + snare + hats.
     env = bands["low"] + 0.6 * bands["mid"] + 0.4 * bands["high"] + env_all
 
-    bpm, conf, cands = _estimate_tempo(env, fps)
+    if tempo:
+        tempo = sorted([int(m), float(b)] for m, b in tempo)
+        bpm, conf, cands = tempo[0][1], 1.0, [[tempo[0][1], 1.0]]
+    else:
+        bpm, conf, cands = _estimate_tempo(env, fps)
+        tempo = [[0, bpm]]
     period = 60.0 * fps / bpm
     phase, _ = _best_phase(env, period, steps=192)
     # The comb also locks onto off-beats (hats, off-beat bass). Off-beat bass is
@@ -215,9 +223,14 @@ def analyze(path: str | Path, beats_per_measure: int = 4) -> dict:
     best_db = _downbeat_phase([chroma, mfcc], phase, period, beats_per_measure)
     first_downbeat = (phase + best_db * period) % measure_frames
     offset_sec = (first_downbeat / fps + LATENCY_SEC) % (period * beats_per_measure / fps)
-    beat_sec = 60.0 / bpm
-    measure_sec = beat_sec * beats_per_measure
-    n_measures = int(np.ceil((duration - offset_sec) / measure_sec))
+    if offset_ms is not None:
+        offset_sec = offset_ms / 1000.0
+    starts = [offset_sec]
+    while starts[-1] < duration:
+        m = len(starts) - 1
+        b = [v for at, v in tempo if at <= m][-1]
+        starts.append(starts[-1] + 60.0 / b * beats_per_measure)
+    n_measures = len(starts) - 1
 
     rms = librosa.feature.rms(y=y, hop_length=HOP)[0]
 
@@ -229,7 +242,9 @@ def analyze(path: str | Path, beats_per_measure: int = 4) -> dict:
     measures = []
     feats = []
     for m in range(n_measures):
-        t0 = offset_sec + m * measure_sec
+        t0 = starts[m]
+        measure_sec = starts[m + 1] - t0
+        beat_sec = measure_sec / beats_per_measure
         f0, f1 = int(t0 * fps), int((t0 + measure_sec) * fps)
         seg = slice(max(0, f0), max(f0 + 1, min(f1, len(rms))))
         onsets = {}
@@ -266,7 +281,7 @@ def analyze(path: str | Path, beats_per_measure: int = 4) -> dict:
             "bpm": bpm,
             "confidence": round(conf, 3),
             "candidates": cands,
-            "changes": [],
+            "changes": [[m, b] for m, b in tempo[1:]],
             "time_sig": [beats_per_measure, 4],
         },
         "offset_ms": int(round(offset_sec * 1000)),
@@ -295,7 +310,9 @@ def to_text(a: dict) -> str:
     beats = t["time_sig"][0]
     ms = a["measures"]
     lines = [
-        f"BPM {t['bpm']:g} (conf {t['confidence']:.2f})  offset {a['offset_ms']}ms  "
+        f"BPM {t['bpm']:g} (conf {t['confidence']:.2f})"
+        + "".join(f" -> m{m}:{v:g}" for m, v in t.get("changes", []))
+        + f"  offset {a['offset_ms']}ms  "
         f"{t['time_sig'][0]}/{t['time_sig'][1]}  duration {a['audio']['duration_sec']:.1f}s  measures 0-{len(ms) - 1}",
         "sections: " + " | ".join(f"{s['label']} m{s['start']}-{s['end'] - 1} ({s['energy']:.2f})" for s in a["sections"]),
         "",
@@ -319,8 +336,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--output", help="analysis JSON path (default: stdout)")
     p.add_argument("--text", help="also write the LLM-readable text summary here")
     p.add_argument("--beats", type=int, default=4, help="beats per measure (default 4)")
+    p.add_argument("--tempo", help="fixed tempo map 'MEASURE:BPM,...', e.g. 0:141,53:138.4,63:141")
+    p.add_argument("--offset", type=int, help="fixed offset in ms (measure 0 start)")
     args = p.parse_args(argv)
-    a = analyze(args.audio, beats_per_measure=args.beats)
+    tempo = [[int(m), float(b)] for m, b in (x.split(":") for x in args.tempo.split(","))] if args.tempo else None
+    a = analyze(args.audio, beats_per_measure=args.beats, tempo=tempo, offset_ms=args.offset)
     js = json.dumps(a, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(js + "\n", encoding="utf-8")

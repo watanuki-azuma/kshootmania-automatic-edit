@@ -17,6 +17,7 @@ uv run pytest
 | コマンド | 内容 |
 |---|---|
 | `ksmauto analyze SONG.ogg -o a.json --text a.txt` | BPM・offset・小節頭・帯域別オンセット・セクションを解析 |
+| `ksmauto analyze SONG.ogg --tempo 0:141,53:138.4 --offset 1074 ...` | テンポが変わる曲: テンポマップと offset を指定して解析し直す |
 | `ksmauto compile draft.ksmd -o chart.kson [--base orig.kson]` | DSL → KSON |
 | `ksmauto decompile chart.(kson\|ksh) -o draft.ksmd` | KSON/KSH → DSL |
 | `ksmauto convert chart.ksh -o chart.kson` | KSH → KSON |
@@ -25,6 +26,7 @@ uv run pytest
 | `ksmauto render FILE --measures 16-47 -o page.png` | 譜面を PNG に描画 |
 | `ksmauto validate FILE` / `ksmauto info FILE` | KSON 構造検証 / 概要 |
 | `ksmauto edit chart.kson --audio SONG.ogg` | ブラウザで同期再生・手修正 |
+| `ksmauto preview FILE [--audio SONG] -o preview.html` | 音源を埋め込んだ単体 HTML の再生プレビュー（サーバー不要。共有用） |
 | `ksmauto sdvxin DIR [-o x.kson]` / `ksmauto sdvxin --report ROOT` | 手元に取得した sdvx.in 譜面（JSON / 画像レイヤー）を KSON に復元 / 公表ノーツ数と照合 |
 
 `FILE` は `.kson` / `.ksh` / `.ksmd` のどれでもよい。

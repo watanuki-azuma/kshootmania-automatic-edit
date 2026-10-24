@@ -23,6 +23,7 @@ uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
 
 確認すること:
 - BPM の信頼度（conf）が低い、候補が割れている → 候補の倍・半分を疑う。曲のノリ（体感テンポ）が 120〜240 に入る方を取る。
+- **途中でテンポが変わる曲**: 解析は一定テンポを仮定する。ある小節から先でグリッドの `X` が拍頭から一様にずれていく（裏拍や 3 連グリッドばかりになる）ならテンポ変化を疑い、キックの間隔からテンポを測って `uv run ksmauto analyze SONG --tempo 0:141,53:138.4,63:141 --offset 1074 ...` で解析し直す。ドラフトにも同じ位置に `bpm 0 138.4` を書く。
 - **小節の頭がずれていることがある**（拍は合っているが 1〜3 拍ずれる）。`low` の `X` が拍頭に揃い、セクション境界が 4・8 小節の区切りに来るように offset を `+ n * 60000/BPM` ms 調整する。
 
 ### 2. 構成と密度を決める（書く前に）
@@ -74,6 +75,7 @@ uv run ksmauto render work/draft.ksmd --measures 0-31 -o work/page.png
 ### 5. 仕上げ
 
 - 完成した `chart.kson` を音源と同じフォルダに置く（`audio:` は相対ファイル名）。
+- 再生して確認・共有する場合: `uv run ksmauto preview work/draft.ksmd -o work/preview.html`（音源は `audio:` から自動で埋め込む。1 ファイルで開ける）。
 - 人が仕上げる場合: `uv run ksmauto edit work/chart.kson --audio SONG.ogg --analysis work/analysis.json` でブラウザエディタを開く（音源と同期再生・手で修正・保存）。
 - エフェクト（FX のエフェクト割り当て）、カメラ、背景は DSL の対象外。既存譜面を直す場合は `--base 元.kson` で compile すれば保持される。
 
