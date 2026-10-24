@@ -23,6 +23,7 @@ uv run pytest
 | `ksmauto separate SONG.ogg -o stems/` | Demucs でボーカル・ドラム・ベース・その他に分離（`stems` extra。PyTorch CPU 版で 2 分の曲に約 1 分） |
 | `ksmauto separate SONG.ogg -o stems/ --model htdemucs_6s` | 上に加えてピアノ・ギターも分ける（ピアノが主役の区間がある曲向け） |
 | `ksmauto transcribe stems/piano.wav` | ピアノのステムを ByteDance のピアノ採譜モデルで音符にする（`transcribe` extra。初回に約 170 MB のモデルを取得。2 分の曲に CPU で 1〜3 分）。`stems/piano.notes.json` に書き、`analyze --stems` が使う |
+| `ksmauto transcribe SONG.ogg --engine muscriptor --model small --python /tmp/musvenv/bin/python -o stems/` | ミックスを MuScriptor で採譜し、楽器に応じた `<row>.notes.json` を出す。`--model` は `small`（既定・CPU 向け）/`medium`/`large`。`-o` はディレクトリ（省略時は音源と同じ場所）。導入・ライセンスは下記 |
 | `ksmauto analyze SONG.ogg --stems stems/ ...` | 分離音源から キック/スネア/ハイハット/ベース/ボーカル/その他（あればピアノ）の段と、ボーカルの音程・その他とピアノの音の高さのレーン（`olane` `plane`）を追加 |
 | `ksmauto compile draft.ksmd -o chart.kson [--base orig.kson]` | DSL → KSON |
 | `ksmauto decompile chart.(kson\|ksh) -o draft.ksmd` | KSON/KSH → DSL |
@@ -36,6 +37,15 @@ uv run pytest
 | `ksmauto sdvxin DIR [-o x.kson]` / `ksmauto sdvxin --report ROOT` | 手元に取得した sdvx.in 譜面（JSON / 画像レイヤー）を KSON に復元 / 公表ノーツ数と照合 |
 
 `FILE` は `.kson` / `.ksh` / `.ksmd` のどれでもよい。
+
+MuScriptor は別の Python 3.12 環境に入れ、`--python` で指定する:
+
+```sh
+uv venv /tmp/musvenv --python 3.12
+uv pip install --python /tmp/musvenv/bin/python 'muscriptor>=0.4'
+```
+
+[MuScriptor](https://github.com/muscriptor/muscriptor) のコードは MIT、重みは非商用の CC BY-NC 4.0。[Hugging Face のモデル一覧](https://huggingface.co/MuScriptor) から使うモデルのライセンスを承諾し、`HF_TOKEN` に読み取りトークンを設定する（初回に重みを取得）。`muscriptor` extra は Python 3.13 / Intel macOS を含む依存解決が通らないため用意していない。出力は MuScriptor の楽器名から piano・guitar・bass・vocal（`voice`）・other（それ以外）にまとめ、ドラムは除外する。強さは全音 1.0。`analyze --stems` が採譜を使うのは、対応する wav がある `other` / `piano` のみ（bass / guitar / vocal の JSON は現状使わない）。
 
 ## 参考譜面コーパス（ローカル専用）
 

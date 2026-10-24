@@ -124,7 +124,7 @@ def main(argv=None):
             draft.add_argument("--base", type=Path)
     sub.add_parser("analyze", help="analyze audio (requires the audio extra)")
     sub.add_parser("separate", help="split audio into vocal/drum/bass/other (+piano/guitar) stems (requires demucs)")
-    sub.add_parser("transcribe", help="transcribe a piano stem into notes (requires piano_transcription_inference)")
+    sub.add_parser("transcribe", help="transcribe audio into notes (ByteDance or MuScriptor)")
     lint_p = sub.add_parser("lint", help="report playability problems")
     lint_p.add_argument("input", type=Path)
     lint_p.add_argument("--analysis", type=Path, help="analysis JSON from `ksmauto analyze`")

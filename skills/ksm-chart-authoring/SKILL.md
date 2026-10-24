@@ -26,6 +26,8 @@ uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text 
 
 `transcribe` が「not installed」で止まるときは飛ばしてよい（`plane` は音から取った精度の低いものになる）。
 
+任意で MuScriptor を使うなら、別の Python 3.12 venv に `muscriptor>=0.4` を入れ、`uv run ksmauto transcribe SONG.ogg --engine muscriptor --model small --python /tmp/musvenv/bin/python -o work/stems` でミックスを採譜できる（CPU は `small` 推奨）。重みは非商用の CC BY-NC 4.0 で、Hugging Face で使うモデルのライセンス承諾と `HF_TOKEN` の設定が必要。`other` / `piano` の JSON は対応する wav があるとき `analyze --stems` が使い、強さは全音 1.0。
+
 demucs が入っていない（`separate` が「demucs is not installed」で止まる）ときは分離を飛ばし、`--stems` なしで解析する:
 
 ```sh

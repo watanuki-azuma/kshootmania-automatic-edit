@@ -137,8 +137,9 @@ def test_top_note_does_not_wrap_around_the_range():
     assert _top_note(rise, 0) == 71
 
 
-def test_piano_stem_uses_transcribed_notes(tmp_path):
-    """With piano.wav and piano.notes.json, the piano row takes onsets and top notes from the notes."""
+@pytest.mark.parametrize("row", ["piano", "other"])
+def test_stem_uses_transcribed_notes(tmp_path, row):
+    """Lane rows take onsets and top notes from notes.json when the matching wav exists."""
     sr, bpm, seconds = 22050, 120.0, 12.0
     n = int(seconds * sr)
     rng = np.random.default_rng(3)
@@ -151,19 +152,26 @@ def test_piano_stem_uses_transcribed_notes(tmp_path):
     stems.mkdir()
     quiet = rng.standard_normal(n) * 1e-4
     piano = np.sin(2 * np.pi * 440 * t) * 0.3 * (t < 8)
-    for name, y in {"drums": kick, "vocals": quiet, "bass": quiet, "other": quiet, "piano": piano}.items():
+    for name, y in {"drums": kick, "vocals": quiet, "bass": quiet, "other": quiet, row: piano}.items():
         sf.write(stems / f"{name}.wav", y, sr)
     sf.write(tmp_path / "mix.wav", kick * 0.5 + piano * 0.5, sr)
     # measure 2 starts at 4 s: a C-major chord (top G4) on beat 0, then E5 and C5 on 8ths
     # (the piano is silent from 8 s on, so the note there is dropped; the last one is past the end)
     notes = [[4.0, 4.4, 60, 0.8], [4.01, 4.4, 67, 0.7], [4.25, 4.5, 76, 0.6], [4.5, 4.9, 72, 0.9],
              [9.0, 9.5, 64, 0.9], [13.0, 13.5, 64, 0.9]]
-    (stems / "piano.notes.json").write_text(json.dumps(notes))
+    if row == "other":
+        notes = [n[:3] + [1.0] for n in notes]  # MuScriptor has no velocity.
+        (stems / "piano.notes.json").write_text("[]")  # No piano.wav: do not add a row.
+    (stems / f"{row}.notes.json").write_text(json.dumps(notes))
 
     a = analyze(tmp_path / "mix.wav", tempo=[[0, bpm]], offset_ms=0, stems=stems)
     st = a["measures"][2]["stems"]
-    assert [b for b, _ in st["onsets"]["piano"]] == [0, 0.5, 1]
-    assert [p for _, p in st["piano_pitch"]] == [67, 76, 72]
-    assert all(not m["stems"]["onsets"]["piano"] for m in a["measures"][4:])
+    assert [b for b, _ in st["onsets"][row]] == [0, 0.5, 1]
+    assert [p for _, p in st[f"{row}_pitch"]] == [67, 76, 72]
+    assert all(not m["stems"]["onsets"][row] for m in a["measures"][4:])
     header = to_text(a).splitlines()[4]
-    assert header.split()[-2:] == ["olane", "plane"]
+    if row == "piano":
+        assert header.split()[-2:] == ["olane", "plane"]
+    else:
+        assert [h for _, h in st["onsets"][row]] == [1.0, 1.0, 1.0]
+        assert header.split()[-1] == "olane" and "plane" not in header.split()
