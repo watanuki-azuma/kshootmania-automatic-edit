@@ -12,7 +12,7 @@ import html
 import json
 from pathlib import Path
 
-VIEWER_VERSION = "v0.1.0"
+VIEWER_VERSION = "v0.2.0"
 AUDIO_TYPES = {".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4"}
 SLOTS = ("<title>Chart viewer</title>",
          '<script id="chart-data" type="application/json">null</script>',

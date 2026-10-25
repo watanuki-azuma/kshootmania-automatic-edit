@@ -123,7 +123,7 @@ uv run ksmauto render out/work/draft.ksmd --measures 0-31 -o out/work/page.png
 ### 5. 仕上げ
 
 - 完成した `chart.kson` を音源と同じフォルダに置く（`audio:` は相対ファイル名）。
-- 再生して確認・共有する場合: `uv run ksmauto preview out/work/draft.ksmd -o out/work/preview.html`（vendored KSM-WEB-VIEWER のページに音源と譜面を埋め込む。1 ファイルで開ける）。preview ファイルなしで開くなら https://watanuki-azuma.github.io/KSM-WEB-VIEWER/ に譜面と音源を渡す（`viewer` コマンドはない）。
+- 再生して確認・共有する場合: `uv run ksmauto preview out/work/draft.ksmd -o out/work/preview.html`（vendored KSM-WEB-VIEWER のページに音源と譜面を埋め込む。1 ファイルで開ける）。preview ファイルなしで開くなら https://watanuki-azuma.github.io/KSM-WEB-VIEWER/ に譜面と音源（曲フォルダの zip でも可）を渡す（`viewer` コマンドはない）。
 - 人が仕上げる場合: `uv run ksmauto edit out/work/chart.kson --audio SONG.ogg --analysis out/work/analysis.json` でブラウザエディタを開く（音源と同期再生・手で修正・保存）。
 - FX ロング・レーザーの音のエフェクトと FX チップのキー音は DSL で書ける（`references/draft-format.md` の「オーディオエフェクト」、使い分けは `references/charting-guide.md` の「FX の使い方」）。preview で再生すると近似の音で確かめられる。
 - カメラ、背景、エフェクトのパラメータ変化（`param_change`）は DSL の対象外。既存譜面を直す場合は `--base 元.kson` で compile すれば保持される。

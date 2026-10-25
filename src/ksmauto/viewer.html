@@ -56,8 +56,9 @@ input[type=range] { accent-color: var(--accent); }
 
 <div class="app">
   <div class="open" id="open">
-    <label>譜面・音源を開く <input id="files" type="file" multiple accept=".kson,.ksh,.mp3,.ogg,.wav,.m4a,.flac,.opus,.aac"></label>
-    <span id="open-status" role="status">KSON / KSH と音源を選択、またはファイル・フォルダーをドロップ</span>
+    <label>譜面・音源を開く <input id="files" type="file" multiple accept=".zip,.kson,.ksh,.mp3,.ogg,.wav,.m4a,.flac,.opus,.aac"></label>
+    <select id="chart-select" aria-label="譜面を選択" hidden></select>
+    <span id="open-status" role="status">KSON / KSH・音源・ZIP を選択、またはファイル・フォルダーをドロップ</span>
   </div>
   <header class="card">
     <h1 id="title"></h1>
@@ -710,6 +711,45 @@ function jdgScale(bottom, legacy, overlay = false) {
   const scale = (base ** order + extra) / 1.5;
   return !overlay && !legacy ? Math.max(scale, 1) : scale;
 }
+async function readZip(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer()), view = new DataView(bytes.buffer);
+  const bad = () => { throw Error('ZIP が壊れているか、対応していません'); };
+  const check = (p, n) => { if (p < 0 || p + n > bytes.length) bad(); };
+  const u16 = p => { check(p, 2); return view.getUint16(p, true); };
+  const u32 = p => { check(p, 4); return view.getUint32(p, true); };
+  let end = bytes.length - 22;
+  for (; end >= Math.max(0, bytes.length - 22 - 65535); end--) if (u32(end) === 0x06054b50 && end + 22 + u16(end + 20) === bytes.length) break;
+  if (end < Math.max(0, bytes.length - 22 - 65535)) bad();
+  const count = u16(end + 10), size = u32(end + 12), offset = u32(end + 16);
+  const zip64 = () => { throw Error('ZIP64 には対応していません'); };
+  if (count === 65535 || size === 0xffffffff || offset === 0xffffffff || (end >= 20 && u32(end - 20) === 0x07064b50)) zip64();
+  if (u16(end + 4) || u16(end + 6) || u16(end + 8) !== count || offset + size > end) bad();
+  const files = [];
+  for (let i = 0, p = offset; i < count; i++) {
+    check(p, 46); if (u32(p) !== 0x02014b50) bad();
+    const flags = u16(p + 8), method = u16(p + 10), packed = u32(p + 20), length = u32(p + 24), local = u32(p + 42);
+    const names = u16(p + 28), extra = u16(p + 30), comment = u16(p + 32);
+    if (packed === 0xffffffff || length === 0xffffffff || local === 0xffffffff || u16(p + 34) === 65535) zip64();
+    if (u16(p + 34)) bad();
+    check(p, 46 + names + extra + comment); if (p + 46 + names + extra + comment > offset + size) bad();
+    const nameBytes = bytes.subarray(p + 46, p + 46 + names); let name;
+    try { name = new TextDecoder('utf-8', {fatal:true}).decode(nameBytes); }
+    catch (e) { if (flags & 0x800) throw e; name = new TextDecoder('shift-jis').decode(nameBytes); }
+    p += 46 + names + extra + comment;
+    if (/[\\/]$/.test(name) || flags & 1 || ![0,8].includes(method) || !/\.(kson|ksh|mp3|ogg|wav|m4a|flac|opus|aac)$/i.test(name)) continue;
+    check(local, 30); if (u32(local) !== 0x04034b50 || u16(local + 6) & 1 || u16(local + 8) !== method) bad();
+    const start = local + 30 + u16(local + 26) + u16(local + 28); check(start, packed);
+    let data = bytes.subarray(start, start + packed);
+    if (method === 8) {
+      if (typeof DecompressionStream === 'undefined') throw Error('このブラウザは ZIP の展開に対応していません');
+      data = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    }
+    if (data.length !== length) bad();
+    const f = new File([data], name.replaceAll('\\', '/').split('/').pop()); f.viewerPath = name; files.push(f);
+  }
+  return files;
+}
+
 </script>
 <script id="chart-data" type="application/json">null</script>
 <script>
@@ -731,17 +771,33 @@ function mount(chart, src) {
 }
 async function openFiles(files) {
   try {
-    const chartFile = files.find(f => /\.(kson|ksh)$/i.test(f.name));
+    files = (await Promise.all([...files].map(f => /\.zip$/i.test(f.name) ? readZip(f) : [f]))).flat();
     for (const f of files) if (/\.(mp3|ogg|wav|m4a|flac|opus|aac)$/i.test(f.name)) audioFiles.set(filePath(f), f);
-    let chart = loadedChart;
-    if (chartFile) {
-      const bytes = await chartFile.arrayBuffer(); let text;
-      try { text = new TextDecoder('utf-8', {fatal: true}).decode(bytes); }
-      catch (e) { if (!/\.ksh$/i.test(chartFile.name)) throw e; text = new TextDecoder('shift-jis').decode(bytes); }
-      chart = /\.ksh$/i.test(chartFile.name) ? parseKsh(text) : JSON.parse(text.replace(/^\uFEFF/, ''));
-      if (!chart?.beat?.bpm?.length || chart.beat.bpm.some(e => !(e[1] > 0))) throw Error('BPM のある KSON / KSH を選んでください');
-      chartPath = filePath(chartFile);
+    const chartFiles = files.filter(f => /\.(kson|ksh)$/i.test(f.name));
+    if (chartFiles.length) {
+      const parsed = []; let error;
+      for (const file of chartFiles) try {   // one broken difficulty does not hide the others
+        const bytes = await file.arrayBuffer(); let text;
+        try { text = new TextDecoder('utf-8', {fatal:true}).decode(bytes); }
+        catch (e) { if (!/\.ksh$/i.test(file.name)) throw e; text = new TextDecoder('shift-jis').decode(bytes); }
+        const chart = /\.ksh$/i.test(file.name) ? parseKsh(text) : JSON.parse(text.replace(/^\uFEFF/, ''));
+        if (!chart?.beat?.bpm?.length || chart.beat.bpm.some(e => !(e[1] > 0))) throw Error('BPM のある KSON / KSH を選んでください');
+        parsed.push({file, chart});
+      } catch (e) { error ||= e; }
+      if (!parsed.length) throw error;
+      charts = parsed;
+      const select = $('chart-select'); select.replaceChildren(); select.hidden = charts.length < 2;
+      for (let i = 0; i < charts.length; i++) {
+        const {file, chart} = charts[i], meta = chart.meta || {}, option = document.createElement('option');
+        option.value = String(i); option.textContent = meta.title ? [meta.title, typeof meta.difficulty === 'number' ? ['LIGHT','CHALLENGE','EXTENDED','INFINITE'][meta.difficulty] : meta.difficulty, meta.level].filter(v => v !== undefined && v !== '').join(' · ') : file.name;
+        select.append(option);
+      }
+      const rank = i => Number(charts[i].chart.meta?.difficulty) || 0;
+      const best = charts.map((_, i) => i).sort((a, b) => rank(b) - rank(a) || (Number(charts[b].chart.meta?.level) || 0) - (Number(charts[a].chart.meta?.level) || 0))[0];
+      select.value = String(best); activeChart = charts[best];
     }
+    const chartFile = activeChart?.file, chart = activeChart?.chart || loadedChart;
+    if (chartFile) chartPath = filePath(chartFile);
     if (!chart) { $('open-status').textContent = '音源を保持しました。KSON / KSH を開いてください'; return; }
     const filename = (chart.audio?.bgm?.filename || '').replaceAll('\\', '/').toLowerCase();
     const relative = normalPath(chartPath.slice(0, chartPath.lastIndexOf('/') + 1) + filename);
@@ -755,7 +811,8 @@ async function openFiles(files) {
     $('open-status').textContent = (chartFile?.name || chart.meta?.title || 'Chart') + (selected ? ' · ' + selected.name : src ? ' · 埋め込み音源' : ' · 音源なし（音源を追加できます）');
   } catch (e) { $('open-status').textContent = '読み込み失敗: ' + e.message; }
 }
-let chartPath = '', opening = Promise.resolve();
+let chartPath = '', charts = [], activeChart = null, opening = Promise.resolve();
+$('chart-select').onchange = e => { const selected = charts[Number(e.target.value)]; opening = opening.then(() => { activeChart = selected; return openFiles([]); }); return opening; };
 const queueFiles = files => { opening = opening.then(() => openFiles(files)); return opening; };
 $('files').onchange = e => { queueFiles([...e.target.files]); e.target.value = ''; };
 async function entryFiles(entry) {
