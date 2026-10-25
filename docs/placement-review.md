@@ -6,7 +6,7 @@
 
 キーは `左需要,右需要|ボタン手数|home/crossing`。需要の強い側を左へ反転。crossing は1手で押す際、需要の軽い側の手を使うには自側の窓を越える必要があること。2手のボタンは両手を必要とし、busy なつまみ側の手も必要になる。各群のセルは「件数 / 譜面数 / 100小節あたり」。例は曲名と0始まりの小節、群ごと最大3件。表は観測された実効手数>2の全カテゴリ。判断は人が記入する。
 
-`src/ksmauto/data/placement_verdicts.json` に表のキーを写し、`"allow"` は頻度検査を抑制、`"forbid"` は `placement-forbidden` warning、`{"min_level": 18}` は18未満で `placement-min-level` warning（18以上は抑制）。判定があれば実効手数・頻度・ジャック閾値より優先。初期値は空。ジャックは各群の行キーを使い、その行の全反復に適用する。
+`src/ksmauto/data/placement_verdicts.json` に表のキーを写し、`"allow"` は頻度検査を抑制、`"forbid"` は `placement-forbidden` warning、`{"min_level": 18}` は18未満で `placement-min-level` warning（18以上は抑制）。判定があれば実効手数・頻度・ジャック閾値より優先。初期値は空。ジャックは各群の行キーを使い、その行の全反復に適用する。ジャック行は `{"warn_ms": x, "info_ms": y}` で閾値を置き換える（null はその段階なし）。
 
 | カテゴリキー | 実効手数 | 17 | 18 | 19-20 | ksm | 例（群ごと最大3） | 判断 |
 |---|---:|---|---|---|---|---|---|

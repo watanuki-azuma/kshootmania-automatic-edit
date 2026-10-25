@@ -359,6 +359,10 @@ def jack_band(dt):
     return max(0, bisect_right(JACK_BANDS_MS, dt + 1e-6) - 1)
 
 
+def _ms(value):
+    return 'off' if value is None else f'{value:g} ms'
+
+
 def jack_key(group, cls, kind):
     return f'jack:{group}:{cls}:{kind}'
 
@@ -389,18 +393,21 @@ def lint(chart: dict, analysis: dict | None = None) -> list[Finding]:
     for lane, a, b, _, cls in jack_intervals(chart, timing, thresholds, profiles):
         cls = 'one-hand' if cls == 'mixed' else cls
         kind = 'BT' if lane < 4 else 'FX'
-        if _apply_verdict(out, verdicts, jack_key(group, cls, kind), level, _where(timing, chart, b)):
-            continue
         row = policy['jacks'][group][cls][kind]
         limit, minimum = row['p1_ms'], row['robust_min_ms']
+        verdict = verdicts.get(jack_key(group, cls, kind))
+        if isinstance(verdict, dict) and 'info_ms' in verdict:
+            # Human thresholds replace the corpus ones; null turns that level off.
+            limit, minimum = verdict['info_ms'], verdict['warn_ms']
+        elif _apply_verdict(out, verdicts, jack_key(group, cls, kind), level, _where(timing, chart, b)):
+            continue
         dt = (timing.pulse_to_sec(b) - timing.pulse_to_sec(a)) * 1000
         warning = minimum is not None and dt < minimum - 1e-6
         if warning or (limit is not None and dt < limit - 1e-6):
             rule = 'fast-jack' if cls == 'two-hand' else 'fast-jack-one-hand'
             out.append(Finding('warning' if warning else 'info', rule, _where(timing, chart, b),
                                f'{jack_key(group, cls, kind)}: {BUTTON_NAMES[lane]} repeats after {dt:.1f} ms ({cls}); '
-                               f'official Lv{group} {kind} p1: {limit:.2f} ms; '
-                               f'5-chart minimum band: {minimum} ms'))
+                               f'info below {_ms(limit)}, warning below {_ms(minimum)}'))
 
     # Very short long notes read as chips but must be held.
     for kind, lane, y, length in events:

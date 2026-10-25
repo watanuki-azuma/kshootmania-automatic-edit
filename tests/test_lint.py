@@ -187,7 +187,20 @@ def test_jack_uses_group_p1_and_mixed_one_hand(monkeypatch, kind):
     c['note']['bt'][3] = [75]  # mixed, counted against one-hand p1
     f = next(f for f in lint(c) if f.rule.startswith('fast-jack'))
     assert f.rule == 'fast-jack-one-hand' and f.level == 'info'
-    assert f'official Lv18 {kind} p1: 70.00 ms' in f.message
+    assert 'info below 70 ms, warning below off' in f.message
+
+
+@pytest.mark.parametrize('verdict,expected', [({'warn_ms': 1000, 'info_ms': None}, [('warning', 'fast-jack')]),
+                                              ({'warn_ms': None, 'info_ms': 1000}, [('info', 'fast-jack')]),
+                                              ({'warn_ms': None, 'info_ms': None}, [])])
+def test_jack_verdict_replaces_thresholds(monkeypatch, verdict, expected):
+    policy = deepcopy(hand_policy())
+    policy['jacks']['18']['two-hand']['BT'].update(p1_ms=1000, robust_min_ms=None)
+    monkeypatch.setattr('ksmauto.lint.hand_policy', lambda: policy)
+    monkeypatch.setattr('ksmauto.lint.placement_verdicts', lambda: {'jack:18:two-hand:BT': verdict})
+    c = _chart(bt=[[60, 90], [], [], []])
+    c['meta']['level'] = 18
+    assert [(f.level, f.rule) for f in lint(c) if f.rule.startswith('fast-jack')] == expected
 
 
 def _analysis(measures):

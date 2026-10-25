@@ -6,7 +6,7 @@
 - 実効手数＝ボタン手数＋slam/steep 各1＋gentle/ending 各0.5。2以下は頻度検査をしない。2超で全公式群（KSM含む）未観測なら `hand-impossible` warning、対象群で0.05/100小節未満なら `hand-rare` info。
 - レーザーの phase 2 定義を維持: slam は前30〜後31 pulse未満、ending は連続移動終点まで50 ms以内、steep は32通常幅/秒超、その他の移動はgentle、静止・無しはstill。slam→ending→steepの順に優先。速度は局所BPM・幅・曲線の微分を使い、傾斜途中の点は移動終点にしない。
 - `fast-jack`（両手）／`fast-jack-one-hand`（片手・mixed・assisted）: 群・BT/FX別の従来p1未満をinfo。同群の5譜面以上で観測された最短帯の下端未満だけwarning。帯は <60 / 60–70 / 70–80 / 80–90 / 90–100 / 100–120 / 120 ms以上。assistedは反対手の占有がgentle/endingのみ、mixedは片手分布へ合算。
-- `placement_verdicts.json` のカテゴリ／ジャック行キーに人手判断があれば優先する。`allow` は抑制、`forbid` は `placement-forbidden` warning、`{"min_level": x}` はx未満で `placement-min-level` warning、x以上なら抑制。初期値は空。
+- `placement_verdicts.json` のカテゴリ／ジャック行キーに人手判断があれば優先する。`allow` は抑制、`forbid` は `placement-forbidden` warning、`{"min_level": x}` はx未満で `placement-min-level` warning、x以上なら抑制。ジャック行は `{"warn_ms": x, "info_ms": y}` で閾値を置き換える（null はその段階なし）。初期値は空。
 - 群: 17〜17.4→17、17.5〜18.9→18、19以上→19-20、17未満→ksm。別群へのフォールバックはしない。欠測のジャック閾値は判定しない。
 - `short-long` warning（1/8拍未満）と音源指定時の after-audio / unaligned / empty-loud / thin は維持。
 
