@@ -3,7 +3,9 @@ from pathlib import Path
 import pytest
 
 from ksmauto.ksh import load_ksh
-from ksmauto.lint import lint
+from ksmauto.lint import hand_policy, jack_intervals, jack_band, effective_hands
+from ksmauto.timing import TimingMap
+from eval.hand_policy import chart_evidence, build_policy, review_rows, write_review
 from eval.placement_rules import aggregate, quantiles, tally, verdict
 
 
@@ -25,7 +27,12 @@ def test_fixture_tally_matches_lint(path):
     c = load_ksh(path)
     t = tally(c)
     assert t['measures'] > 0
-    assert t['rules']['hand-overload']['count'] == sum(f.rule == 'hand-overload' for f in lint(c))
+    evidence = chart_evidence(c, hand_policy()['thresholds'])
+    assert sum(evidence['categories'].values()) == len({y for lane in c['note']['bt'] + c['note']['fx']
+                                                          for y, _ in ((n, 0) if isinstance(n, int) else n for n in lane)})
+    intervals = list(jack_intervals(c, TimingMap(c['beat']), hand_policy()['thresholds']))
+    for cls in ('one-hand', 'two-hand', 'assisted', 'mixed'):
+        assert t['rules']['jack-' + cls]['count'] == sum(i[-1] == cls for i in intervals)
     assert t['button_starts'] == sum(len(lane) for kind in ('bt', 'fx') for lane in c['note'][kind])
     assert all(len(r['examples']) <= 5 for r in t['rules'].values())
 
@@ -46,12 +53,12 @@ def test_jack_hand_occupancy_and_long_end():
     r = rules(chart(bt=[[[0, 60], 90], [], [], []]))
     assert r['jack-two-hand']['by']['BT:long-end'] == 1
     assert r['long-end-to-chip']['metrics']['interval_ms'] == [62.5]
-    # A's home knob forces the free right hand to repeat A.
+    # A's home knob forces the right hand to repeat A, with gentle assist.
     r = rules(chart(bt=[[60, 90], [], [], []], laser=[[[0, [[0, 0], [120, 1]]]], []]))
-    assert r['jack-one-hand']['count'] == 1
+    assert r['jack-assisted']['count'] == 1
     # Partial knob occupancy is a third category, not full-interval occupancy.
     r = rules(chart(bt=[[0, 120], [], [], []], laser=[[], [[60, [[0, 0], [60, 1]]]]]))
-    assert r['jack-mixed']['count'] == 1
+    assert r['jack-assisted']['count'] == 1
 
 
 def test_trill_runs_and_breaks():
@@ -184,3 +191,66 @@ def test_group_aggregation_verdict_and_quantiles():
     assert verdict(1, 1, 1000, 100, True) == 'rare'
     assert verdict(1, 1, 100, 20, True) == 'common'
     assert quantiles([0, 100])['p1'] == 1
+
+
+def test_decode_noise_filter_retains_real_fast_slams():
+    c = chart(laser=[[[0, [[0, 0], [60, 1], [65, .98], [120, 0], [180, 1]]]], []])
+    r = rules(c)['laser-zigzag']
+    assert r['by']['decode_short_reversal_excluded'] == 1
+    assert r['count'] == 1
+    c = chart(laser=[[[0, [[0, [0, .5]], [20, [0, .5]], [40, [.5, 0]]]]], []])
+    r = rules(c)['slam-interval']
+    assert r['by']['decode_short_interval_excluded'] == 1
+    assert r['count'] == 1  # rapid opposite-direction slam is retained
+
+
+def test_policy_aggregates_review_and_percentiles():
+    c = chart(bt=[[0, 30, 60], [], [], [15]])
+    row = {'meta': {'group': '18', 'title': 'Tiny'}, 'tally': tally(c),
+           'hand': chart_evidence(c, hand_policy()['thresholds'])}
+    policy = build_policy([row], hand_policy()['thresholds'])
+    assert policy['groups']['18'] == {'charts': 1, 'measures': 1}
+    assert policy['jacks']['18']['one-hand']['BT']['count'] == 1
+    assert policy['jacks']['18']['one-hand']['BT']['p1_ms'] == 62.5
+    assert policy['jacks']['17']['one-hand']['BT']['p1_ms'] is None
+    assert all(v['18']['charts'] == 1 for v in policy['categories'].values())
+    policy['groups']['18']['measures'] = 10000
+    review = review_rows([row], policy)
+    assert review == []  # no overloaded categories in this chart
+
+
+@pytest.mark.parametrize('dt,index', [(0, 0), (59.999, 0), (60, 1), (70, 2), (80, 3),
+                                     (90, 4), (100, 5), (119.999, 5), (120, 6), (2000, 6)])
+def test_jack_bands(dt, index):
+    assert jack_band(dt) == index
+
+
+def test_robust_minimum_counts_charts_not_repeats():
+    def row(dts):
+        return {'meta': {'group': '17', 'title': 'Test'}, 'tally': {'measures': 100},
+                'hand': {'categories': {}, 'examples': {},
+                         'jacks': [['two-hand', 'BT', dt, 0] for dt in dts]}}
+    rows = [row([10] * 100 + [65, 75]), *[row([65, 75]) for _ in range(3)]]
+    policy = build_policy(rows, hand_policy()['thresholds'])
+    r = policy['jacks']['17']['two-hand']['BT']
+    assert r['robust_min_ms'] is None
+    assert r['bands'][0]['charts'] == 1
+    rows.append(row([75]))
+    r = build_policy(rows, hand_policy()['thresholds'])['jacks']['17']['two-hand']['BT']
+    assert r['robust_min_ms'] == 70
+    assert [b['charts'] for b in r['bands'][:3]] == [1, 4, 5]
+    assert sum(b['count'] for b in r['bands']) == r['count']
+
+
+def test_review_lists_all_overloaded_categories_and_24_jack_rows(tmp_path):
+    c = chart(bt=[[120], [], [], []], laser=[[[120, [[0, [0, 1]]]]]] * 2)
+    row = {'meta': {'group': '18', 'title': 'Tiny'}, 'tally': tally(c),
+           'hand': chart_evidence(c, hand_policy()['thresholds'])}
+    policy = build_policy([row], hand_policy()['thresholds'])
+    review = review_rows([row], policy)
+    assert len(review) == 1
+    assert effective_hands(review[0][0]) == 3
+    assert dict(review[0][-1]) == {'18': [('Tiny', 0)]}
+    path = tmp_path / 'review.md'
+    write_review([row], policy, path)
+    assert path.read_text().count('| 未判定 |') == 25

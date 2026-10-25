@@ -1,4 +1,4 @@
-"""Mine placement evidence; never change lint policy or redistribute chart data.
+"""Mine placement evidence and regenerate aggregate lint policy; never redistribute charts.
 
 Usage: uv run python tests/eval/placement_rules.py [--workers 4]
 Only aggregate statistics and at most five locations per group/rule are reported.
@@ -19,8 +19,15 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from ksmauto.ksh import load_ksh
-from ksmauto.lint import _button_events, _hands_for_buttons, _moving_laser_ranges, _value, stats
+from ksmauto.lint import _button_events, _moving_laser_ranges, _value, stats
 from ksmauto.timing import TimingMap
+from ksmauto.lint import (hand_policy, jack_context, jack_interval_class, level_group,
+                          merged, contains, overlaps, covers, home)
+
+try:
+    from .hand_policy import (chart_evidence, build_policy, write_review, audit, doc_intro, load_chart)
+except ImportError:
+    from hand_policy import (chart_evidence, build_policy, write_review, audit, doc_intro, load_chart)
 
 try:
     from .sdvxin_stats import usable
@@ -30,11 +37,25 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / 'out' / 'placement_rules_cache.jsonl'
 GROUPS = ('17', '18', '19-20', 'ksm')
+
+
+def _legacy_hands_for_buttons(pressed):
+    """Legacy phase-1 model, retained only for the historical comparison tables."""
+    lanes = sorted({l if k == 'bt' else l + 1 for k, l in pressed})
+    hands, reach = 0, -1
+    for lane in lanes:
+        if lane > reach:
+            hands += 1
+            reach = lane + 1
+    return hands
+
+
 NAMES = ('A', 'B', 'C', 'D', 'FL', 'FR')
 RULES = {
-    'hand-overload': '既存 lint と同じ、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数）',
+    'hand-overload': '旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数）',
     'jack-two-hand': '同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし）',
-    'jack-one-hand': '同じ反復で反対手が全区間、つまみまたは自側 long に占有されるもの',
+    'jack-one-hand': '反対手が全区間占有。lint閾値ではmixedも含める',
+    'jack-assisted': '反対手の占有がgentle/endingのみの反復（別分布）',
     'trill-one-hand': '反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数）',
     'stream-density': 'ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数）',
     'chord-shapes': 'ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数）',
@@ -54,37 +75,6 @@ RULES = {
     'wide-laser': '幅指定が 2 のレーザー区間（区間数）',
 }
 # All positions in the report are zero-based TimingMap measure indices.
-
-
-def merged(ranges):
-    out = []
-    for a, b in sorted(ranges, key=lambda r: (r[0], r[1])):
-        if out and a <= out[-1][1]:
-            out[-1][1] = max(out[-1][1], b)
-        else:
-            out.append([a, b])
-    return out
-
-
-def contains(ranges, y):
-    i = bisect_right(ranges, [y, math.inf]) - 1
-    return i >= 0 and y < ranges[i][1]
-
-
-def overlaps(ranges, a, b):
-    i = bisect_right(ranges, [a, math.inf]) - 1
-    return (i >= 0 and ranges[i][1] > a) or (i + 1 < len(ranges) and ranges[i + 1][0] < b)
-
-
-def covers(ranges, a, b):
-    if b <= a:
-        return contains(ranges, a)
-    i = bisect_right(ranges, [a, math.inf]) - 1
-    return i >= 0 and ranges[i][1] >= b
-
-
-def home(lane):
-    return int(lane in (2, 3, 5))
 
 
 def pressed_lanes(lanes):
@@ -190,7 +180,7 @@ def crossing_ranges(segments):
     return merged(found)
 
 
-def tally(chart):
+def tally(chart, thresholds=None):
     """Return per-chart counts, metric samples and bounded example locations.
 
     Busy spans are half-open; long endpoints are free. Interval classification
@@ -210,6 +200,8 @@ def tally(chart):
                        for (a, _, va, _), (b, vb, _, _) in zip(pts, pts[1:]) if va != vb)
                 for lane in sections]
     slam_ys = [{y for y, _, _ in lane} for lane in slams]
+    slam_values = [{y: (v, vf) for _, _, pts, _ in lane for y, v, vf, _ in pts if v != vf}
+                   for lane in sections]
     result = {rule: {'count': 0, 'by': {}, 'metrics': {}, 'examples': []} for rule in RULES}
     # The mixed bucket documents intervals that satisfy neither requested rule.
     result['jack-mixed'] = {'count': 0, 'by': {}, 'metrics': {}, 'examples': []}
@@ -253,18 +245,10 @@ def tally(chart):
     busy = [merged([*moving[side], *((a, b) for a, b, l in longs if home(l) == side)])
             for side in (0, 1)]
 
-    def intervening(side, a, b):
-        ss = home_starts[side]
-        i = bisect_right(ss, a)
-        return i < len(ss) and ss[i] < b
+    context = jack_context(chart, timing, thresholds if thresholds is not None else hand_policy()['thresholds'])
 
     def interval_class(side, a, b):
-        other = 1 - side
-        if covers(busy[other], a, b):
-            return 'one-hand'
-        if not overlaps(busy[other], a, b) and not intervening(other, a, b):
-            return 'two-hand'
-        return 'mixed'
+        return jack_interval_class(context, side, a, b)
 
     def busy_at(side, y):
         return contains(busy[side], y)
@@ -315,7 +299,7 @@ def tally(chart):
                     flush()
                     continue
                 lane = notes[0][0]
-                if run and (lane == run[-1][1] or interval_class(side, run[-1][0], y) != 'one-hand'
+                if run and (lane == run[-1][1] or interval_class(side, run[-1][0], y) not in ('one-hand', 'assisted')
                             or overlaps(moving[side], run[-1][0], y)):
                     flush()
                 run.append((y, lane))
@@ -343,10 +327,10 @@ def tally(chart):
         lanes = [l for l, _ in starts[y]]
         turning = [contains(s, y) for s in moving]
         pressed = pressed_lanes(lanes + [l for _, _, l in active])
-        if sum(turning) + _hands_for_buttons(pressed) > 2:
+        if sum(turning) + _legacy_hands_for_buttons(pressed) > 2:
             add('hand-overload', y, f'{sum(turning)} knobs:' + shape(set(lanes + [l for _, _, l in active])))
             knobs = sum(contains(unpadded[s], y) or y in slam_ys[s] for s in (0, 1))
-            why = 'without-slam-padding' if knobs + _hands_for_buttons(pressed) > 2 else 'slam-padding-only'
+            why = 'without-slam-padding' if knobs + _legacy_hands_for_buttons(pressed) > 2 else 'slam-padding-only'
             counters['hand-overload']['cause:' + why] += 1
         if not any(turning) or sum(turning) == 1:
             mirror = turning[1]
@@ -374,7 +358,7 @@ def tally(chart):
                 if length or held == chip:
                     continue
                 side = home(held)
-                fits = _hands_for_buttons(pressed_lanes([held, chip])) == 1
+                fits = _legacy_hands_for_buttons(pressed_lanes([held, chip])) == 1
                 same = home(chip) == side
                 if same or (fits and busy_at(1 - side, y)):
                     add('hold-and-chip', y, 'reach:hold-' + NAMES[held] + '+chip-' + NAMES[chip])
@@ -388,6 +372,9 @@ def tally(chart):
     for side in (0, 1):
         for (a, _, _), (b, _, _) in zip(slams[side], slams[side][1:]):
             dt = ms(a, b)
+            if b - a <= 30 and max(abs(v - w) for v, w in zip(slam_values[side][a], slam_values[side][b])) < 0.03:
+                counters['slam-interval']['decode_short_interval_excluded'] += 1
+                continue
             add('slam-interval', b, 'LR'[side], 'interval_ms', dt, dt)
         for y, direction, start in slams[side]:
             if y - start < 15:
@@ -404,19 +391,23 @@ def tally(chart):
         for start, end, points, w in sections[side]:
             if w == 2:
                 add('wide-laser', start, 'LR'[side], 'duration_ms', ms(start, end), -ms(start, end))
-            direction, reversals = 0, []
+            direction, reversals, previous_span = 0, [], 0
             for (a, v, vf, _), (b, vb, _, _) in zip(points, points[1:]):
                 if v != vf:
-                    direction, reversals = 0, []
+                    direction, reversals, previous_span = 0, [], 0
                 d = (vb > vf) - (vb < vf)
                 if d:
+                    if direction and d != direction and (b - a < 7.5 or previous_span < 7.5):
+                        counters['laser-zigzag']['decode_short_reversal_excluded'] += 1
+                        direction, reversals, previous_span = d, [], b - a
+                        continue
                     if direction and d != direction:
                         add('laser-zigzag', a, 'LR'[side])
                         if reversals:
                             dt = ms(reversals[-1], a)
                             sample('laser-zigzag', 'reversal_interval_ms', dt)
                         reversals.append(a)
-                    direction = d
+                    direction, previous_span = d, b - a
         for prev, nxt in zip(sections[side], sections[side][1:]):
             a, b = prev[1], nxt[0]
             last = 0.5 + (prev[2][-1][2] - 0.5) * prev[3]
@@ -492,7 +483,7 @@ def sources():
             continue
         path = ROOT / 'out' / 'sdvxin_kson' / (row['key'] + '.json')
         meta = {'key': row['key'], 'title': row['title'], 'level': row['level'],
-                'group': str(level) if level < 19 else '19-20'}
+                'group': level_group(row['level'])}
         if not path.exists():
             issues.append({**meta, 'error': 'missing decoded KSON'})
         else:
@@ -504,10 +495,11 @@ def sources():
                    'stats_rejected': sum(not usable(r) for r in raw), 'source_issues': issues}
 
 
-def cache_version():
+def cache_version(thresholds):
     paths = [Path(__file__), ROOT / 'src' / 'ksmauto' / 'lint.py', ROOT / 'src' / 'ksmauto' / 'timing.py',
-             ROOT / 'src' / 'ksmauto' / 'ksh.py', Path(__file__).with_name('sdvxin_stats.py')]
-    return hashlib.sha256(b''.join(p.read_bytes() for p in paths)).hexdigest()
+             ROOT / 'src' / 'ksmauto' / 'ksh.py', Path(__file__).with_name('sdvxin_stats.py'), Path(__file__).with_name('hand_policy.py')]
+    return hashlib.sha256(b''.join(p.read_bytes() for p in paths) +
+                          json.dumps(thresholds, sort_keys=True).encode()).hexdigest()
 
 
 def fingerprint(path, meta, version):
@@ -516,12 +508,13 @@ def fingerprint(path, meta, version):
 
 
 def mine(task):
-    path, meta, stamp = task
+    path, meta, stamp, thresholds = task
     try:
-        chart = load_ksh(path) if path.endswith('.ksh') else json.loads(Path(path).read_text(encoding='utf-8'))
+        chart = load_chart(path, meta)
         meta = {**meta, 'title': meta.get('title', chart.get('meta', {}).get('title', '')),
                 'level': meta.get('level', chart.get('meta', {}).get('level'))}
-        return {'meta': meta, 'fingerprint': stamp, 'tally': tally(chart)}
+        return {'meta': meta, 'fingerprint': stamp, 'tally': tally(chart, thresholds),
+                'hand': chart_evidence(chart, thresholds)}
     except Exception as exc:  # noqa: BLE001 - an input failure must not hide other charts
         return {'meta': meta, 'fingerprint': stamp, 'error': repr(exc)}
 
@@ -610,17 +603,18 @@ def locations(examples, n=3):
 
 
 def write_doc(report, path):
-    lines = ['# 公式譜面の配置採掘（phase 1）', '',
-             '左手＝L つまみ・FL・BT A/B、右手＝R つまみ・FR・BT C/D を基本とする。'
+    lines = ['# 公式譜面の配置採掘（phase 1 + 2）', '',
+             *doc_intro(report['policy'], report['lint_rates']),
+             '以下の phase 1 比較表は旧手数モデルも残す。現在の lint 規則は上節のとおり。左手＝L つまみ・FL・BT A/B、右手＝R つまみ・FR・BT C/D を基本とする。'
              'つまみの「操作中」は `lint._moving_laser_ranges`（傾斜、直角の前30〜後31 pulse未満）。'
              '自側 long の保持も手を占有する。片つまみ中は空いた手が全レーンを担当できるが、'
-             '同時押しの必要手数は `_hands_for_buttons`（隣接2位置、FL は B、FR は C の位置）による。', '',
+             '同時押しの必要手数は `_legacy_hands_for_buttons`（隣接2位置、FL は B、FR は C の位置）による。', '',
              'ジャックは基本の担当手を用い、その手が全区間つまみ中かつ反対つまみが空なら担当を反転する。'
              '反対手の連続占有が区間全体を覆えば片手、占有も区間途中の自側打鍵もなければ両手。'
-             '部分的な占有・途中の自側打鍵だけのものは mixed として別集計する。実際の運指を断定するものではない。', '',
+             'gentle/endingのみの占有はassisted、部分占有・途中の自側打鍵だけはmixed。lintではmixedを片手へ合算する。実運指は断定しない。', '',
              '小節は `TimingMap` の **0 始まり**。分母は pulse 0 から最後のボタン終端／レーザー端を含む小節まで（空小節も含む）。'
              '時間は BPM 変化を積分し、音源 offset は用いない。占有区間は半開区間。'
-             'hold-and-chip と既存 lint の保持判定だけは保持開始の同時刻も除く。'
+             'hold-and-chip と組合せ表の保持判定だけは保持開始の同時刻も除く。'
              '1 拍＝240 pulse。grid の 1/16・1/12 は全音符基準（60・80 pulse）、'
              '「1/16 拍後」は15 pulse、「1/8 拍未満」は30 pulse と区別する。', '',
              '判定は全群で0なら **never**、それ以外は各群で100小節あたり1未満 **または** 出現譜面率5%未満なら **rare**、残りは **common**。'
@@ -652,7 +646,10 @@ def write_doc(report, path):
             elif rule in ('jack-one-hand', 'jack-two-hand', 'long-end-to-chip'):
                 extra.append(f'<75ms: {by.get("under_75ms", 0):,}')
             elif rule == 'slam-interval':
+                extra.append(f'短間隔除外: {by.get("decode_short_interval_excluded", 0):,}')
                 extra.append(f'開始後<15pulse: {by.get("near_section_start", 0):,}')
+            elif rule == 'laser-zigzag':
+                extra.append(f'短反転除外: {by.get("decode_short_reversal_excluded", 0):,}')
             elif rule == 'laser-crossing':
                 extra.append(f'合計 {number(row["total_duration_sec"])}秒、開始 {by.get("button_start_times", 0):,}時刻/{by.get("button_starts", 0):,}ボタン')
             elif rule == 'hold-and-chip':
@@ -694,7 +691,7 @@ def surprises(report):
     lines = []
     for rule, text in (
         ('hand-overload', 'ほぼ0という予想に反して多い。直角前後の占有余白だけによる件数を主表で分離した'),
-        ('jack-mixed', '途中だけ占有される区間は片手／両手へ無理に二分できない'),
+        ('jack-mixed', '途中だけ占有される区間。lintでは保守的に片手へ合算'),
         ('jack-one-hand', '短い間隔でも担当手は推定。反対側つまみ・long の連続占有と実際の運指は区別したい'),
         ('hold-and-chip', 'leave は固定の保持手を仮定した結果で、持ち替え・つまみ余白の影響があり得る'),
         ('button-during-slam-same-hand', '直角の直後にホーム側の開始があっても、反対手で拾う運指はあり得る'),
@@ -721,7 +718,11 @@ def main():
     args = parser.parse_args()
     start = time.perf_counter()
     tasks, inputs = sources()
-    version = cache_version()
+    # Keep the phase-2 definitions; changing the button model must not retune them.
+    thresholds = {'ending_sec': .05, 'steep_widths_per_sec': 32}
+    policy_path = ROOT / 'src' / 'ksmauto' / 'data' / 'hand_categories.json'
+    policy_path.parent.mkdir(exist_ok=True)
+    version = cache_version(thresholds)
     cached = {}
     if CACHE.exists() and not args.refresh:
         for line in CACHE.read_text(encoding='utf-8').splitlines():
@@ -737,7 +738,7 @@ def main():
         if old and old.get('fingerprint') == stamp and 'error' not in old:
             results.append(old)
         else:
-            pending.append((path, meta, stamp))
+            pending.append((path, meta, stamp, thresholds))
     reused = len(results)
     print(f'{len(tasks)} inputs, {reused} cached, {len(pending)} to mine', flush=True)
     CACHE.parent.mkdir(exist_ok=True)
@@ -755,7 +756,20 @@ def main():
         for row in results:
             out.write(json.dumps(row, ensure_ascii=False, separators=(',', ':')) + '\n')
     tmp.replace(CACHE)
+    errors = [r for r in results if 'error' in r]
+    if errors:
+        raise RuntimeError(f'{len(errors)} mining failures; policy not replaced: {errors[0]}')
+    policy = build_policy(results, thresholds)
+    policy_tmp = policy_path.with_suffix('.tmp')
+    policy_tmp.write_text(json.dumps(policy, ensure_ascii=False, separators=(',', ':'), allow_nan=False) + '\n', encoding='utf-8')
+    policy_tmp.replace(policy_path)
+    hand_policy.cache_clear()
+    print('Auditing lint on corpus...', flush=True)
+    rates = audit(tasks, policy, args.workers)
     report = aggregate(results)
+    report['policy'] = policy
+    report['lint_rates'] = rates
+    write_review(results, policy, ROOT / 'docs' / 'placement-review.md')
     report['inputs'] = inputs
     report['errors'] = inputs['source_issues'] + [r for r in results if 'error' in r]
     report['runtime_sec'] = round(time.perf_counter() - start, 3)

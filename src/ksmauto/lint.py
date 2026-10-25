@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import math
+import json
 
+from bisect import bisect_right
+from collections import defaultdict
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import lru_cache
+from importlib.resources import files
 
 from .timing import TimingMap
 
 LANES = ["A", "B", "C", "D"]
 FX_LANES = ["L", "R"]
 
-JACK_MIN_SEC = 0.075         # same-lane repeats faster than this are hard to hit cleanly
 SHORT_LONG_BEATS = Fraction(1, 8)
 MAX_PEAK_WINDOW_SEC = 2.0
 # K-Shoot MANIA v2 (Judgment/JudgmentDefines.hpp): from this BPM, holds and lasers tick
@@ -94,38 +98,309 @@ def _moving_laser_ranges(chart):
 
 
 def _hands_for_buttons(pressed) -> int:
-    """Minimum hands to press the buttons, each hand spanning two adjacent lanes."""
-    if not pressed:
+    """Minimum span-3 hands; an FX needs both of its underlying BT lanes."""
+    mask = sum(1 << l for l in {l if k == 'bt' else l + 4 for k, l in pressed})
+    return button_hands(mask)
+
+
+# A-C + FX-L and B-D + FX-R. A hand can travel to either window.
+HAND_REACH = (0b010111, 0b101110)
+
+
+@lru_cache(maxsize=64)
+def button_hands(mask):
+    if not mask:
         return 0
-    # FX buttons sit between the BT lanes toward the centre: FX-L reaches like B,
-    # FX-R like C, so FX-L+FX-R or A+FX-L fit one hand while A+FX-R does not.
-    lanes = sorted({l if k == "bt" else l + 1 for k, l in pressed})
-    hands, reach = 0, -1
-    for lane in lanes:
-        if lane > reach:
-            hands += 1
-            reach = lane + 1
-    return hands
+    # Exact set cover, with no assumption that the answer fits two hands.
+    return 1 + min(button_hands(mask & ~reach) for reach in HAND_REACH if mask & reach)
+
+
+@lru_cache(maxsize=1)
+def hand_policy():
+    """Corpus aggregates shipped with the package (no chart fragments)."""
+    return json.loads(files('ksmauto').joinpath('data/hand_categories.json').read_text(encoding='utf-8'))
+
+
+@lru_cache(maxsize=1)
+def placement_verdicts():
+    return json.loads(files('ksmauto').joinpath('data/placement_verdicts.json').read_text(encoding='utf-8'))
+
+
+def level_group(level):
+    level = float(level or 0)
+    if level < 17:
+        return 'ksm'
+    return '17' if level <= 17.4 else ('18' if level < 19 else '19-20')
+
+
+def merged(ranges):
+    out = []
+    for a, b in sorted(ranges, key=lambda r: (r[0], r[1])):
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out
+
+
+def contains(ranges, y):
+    i = bisect_right(ranges, [y, math.inf]) - 1
+    return i >= 0 and y < ranges[i][1]
+
+
+def overlaps(ranges, a, b):
+    if b <= a:
+        return contains(ranges, a)
+    i = bisect_right(ranges, [a, math.inf]) - 1
+    return (i >= 0 and ranges[i][1] > a) or (i + 1 < len(ranges) and ranges[i + 1][0] < b)
+
+
+def covers(ranges, a, b):
+    if b <= a:
+        return contains(ranges, a)
+    i = bisect_right(ranges, [a, math.inf]) - 1
+    return i >= 0 and ranges[i][1] >= b
+
+
+def home(lane):
+    return int(lane in (2, 3, 5))
+
+
+def laser_demands(chart, timing):
+    """Indexed slope/section/slam geometry. Width is in normal lane widths.
+
+    Contiguous slopes form a movement, ending at a stationary segment or the
+    section end. BPM boundaries split speed evaluation, not movement endpoints.
+    Curves retain their control point for instantaneous speed evaluation.
+    """
+    out = []
+    lasers = chart.get('note', {}).get('laser', [])
+    for side in (0, 1):
+        slopes, slams = [], []
+        for y, points, *width in (lasers[side] if side < len(lasers) else []):
+            w = width[0] if width else 1
+            pts = [(y + p[0], *_value(p[1]), p[2] if len(p) > 2 else [0, 0]) for p in points]
+            if not pts:
+                continue
+            slams.extend((a - 30, a + 31) for a, v, vf, _ in pts if v != vf)
+            movement_end = pts[-1][0]
+            rows = []
+            for (a, _, va, curve), (b, vb, _, _) in reversed(list(zip(pts, pts[1:]))):
+                if va == vb:
+                    movement_end = a
+                elif b > a:
+                    rows.append((a, b, abs(vb - va) * w, curve, movement_end))
+            slopes.extend(reversed(rows))
+        slopes.sort()
+        out.append({'slopes': slopes, 'starts': [r[0] for r in slopes],
+                    'slams': merged(slams)})
+    return out
+
+
+def slope_at(profile, timing, y):
+    i = bisect_right(profile['starts'], y) - 1
+    if i < 0:
+        return None
+    a, b, distance, curve, end = profile['slopes'][i]
+    if not a <= y < b:
+        return None
+    x = (y - a) / (b - a)
+    ca, cb = curve
+    derivative = 1.0
+    if ca != cb:
+        root = math.sqrt(max(0, ca * ca + x - 2 * ca * x))
+        t = (ca - root) / (2 * ca - 1) if ca < 0.25 else x / (ca + root)
+        dx = 2 * ((1 - t) * ca + t * (1 - ca))
+        dy = 2 * ((1 - t) * cb + t * (1 - cb))
+        derivative = dy / dx if dx else math.inf
+    # A pulse-local speed respects tempo changes inside a slope.
+    seconds_per_pulse = 60 / (240 * timing._bpms[max(0, bisect_right(timing._pulses, y) - 1)])
+    speed = distance * derivative / ((b - a) * seconds_per_pulse)
+    return speed, max(0, timing.pulse_to_sec(end) - timing.pulse_to_sec(y))
+
+
+def demand_at(profile, timing, y, thresholds):
+    if contains(profile['slams'], y):
+        return 'slam'
+    slope = slope_at(profile, timing, y)
+    if slope:
+        speed, remaining = slope
+        if remaining <= thresholds['ending_sec'] + 1e-9:
+            return 'ending'
+        return 'steep' if speed > thresholds['steep_widths_per_sec'] else 'gentle'
+    # Absent lasers and stationary lasers both leave the hand free.
+    return 'still'
+
+
+DEMAND_ORDER = {'still': 0, 'ending': 1, 'gentle': 2, 'steep': 3, 'slam': 4}
+BUTTON_NAMES = ('A', 'B', 'C', 'D', 'FX-L', 'FX-R')
+MIRROR_LANES = (3, 2, 1, 0, 5, 4)
+
+
+def category_key(demands, pressed):
+    """Knob demands, minimum button hands, and unavoidable far-side reach.
+
+    Prefer the less busy knob's hand for a one-hand press. Crossing is required
+    when that hand must leave its home span-3 window. Two button hands already
+    imply borrowing every busy knob hand; starts and holds have equal weight.
+    """
+    ds = list(demands)
+    lanes = set(pressed)
+    if DEMAND_ORDER[ds[1]] > DEMAND_ORDER[ds[0]]:
+        ds.reverse()
+        lanes = {MIRROR_LANES[l] for l in lanes}
+    mask = sum(1 << l for l in lanes)
+    hands = button_hands(mask)
+    crossing = hands == 1 and ds[0] != ds[1] and bool(mask & ~HAND_REACH[1])
+    return f'{",".join(ds)}|{hands}|{"crossing" if crossing else "home"}'
+
+
+def effective_hands(key):
+    demands, hands, _ = key.split('|')
+    weight = {'still': 0, 'ending': .5, 'gentle': .5, 'steep': 1, 'slam': 1}
+    return int(hands) + sum(weight[d] for d in demands.split(','))
+
+
+def button_categories(chart, timing, thresholds, profiles=None):
+    profiles = profiles if profiles is not None else laser_demands(chart, timing)
+    starts = defaultdict(list)
+    for kind, lane, y, length in _button_events(chart):
+        starts[y].append((lane if kind == 'bt' else lane + 4, length))
+    active = []
+    for y, notes in sorted(starts.items()):
+        active = [(b, l) for b, l in active if b > y]
+        pressed = [(l, 'S') for l, _ in notes] + [(l, 'H') for _, l in active]
+        demands = [demand_at(p, timing, y, thresholds) for p in profiles]
+        yield y, category_key(demands, [l for l, _ in pressed]), demands, pressed
+        active.extend((y + length, l) for l, length in notes if length)
+
+
+def jack_context(chart, timing, thresholds, profiles=None):
+    """Shared interval classifier for mining and lint, including assist."""
+    profiles = profiles if profiles is not None else laser_demands(chart, timing)
+    moving = [merged(_moving_laser_ranges({'note': {'laser': [lane]}}))
+              for lane in chart.get('note', {}).get('laser', [])]
+    moving += [[] for _ in range(2 - len(moving))]
+    starts, holds = [[], []], [[], []]
+    for kind, lane, y, length in _button_events(chart):
+        side = home(lane if kind == 'bt' else lane + 4)
+        starts[side].append(y)
+        if length:
+            holds[side].append((y, y + length))
+    busy = [merged([*moving[s], *holds[s]]) for s in (0, 1)]
+    hard = []
+    for side, p in enumerate(profiles):
+        ranges = list(p['slams']) + holds[side]
+        # Split at tempo boundaries and the assist window. A quadratic graph's
+        # derivative is monotone, so each piece has at most one speed crossing.
+        for a, b, _, curve, end in p['slopes']:
+            stop = min(b, timing.sec_to_pulse(timing.pulse_to_sec(end) - thresholds['ending_sec']))
+            cuts = [a, *[v for v in timing._pulses if a < v < stop], stop]
+            for x, z in zip(cuts, cuts[1:]):
+                if x >= z:
+                    continue
+                limit = thresholds['steep_widths_per_sec']
+                left = slope_at(p, timing, x)[0] > limit
+                right = slope_at(p, timing, math.nextafter(z, x))[0] > limit
+                if left == right:
+                    if left:
+                        ranges.append((x, z))
+                else:
+                    lo, hi = x, z
+                    for _ in range(48):
+                        mid = (lo + hi) / 2
+                        if (slope_at(p, timing, mid)[0] > limit) == left:
+                            lo = mid
+                        else:
+                            hi = mid
+                    cross = (lo + hi) / 2
+                    ranges.append((x, cross) if left else (cross, z))
+        hard.append(merged(ranges))
+    return {'moving': moving, 'busy': busy, 'hard': hard,
+            'starts': [sorted(set(s)) for s in starts]}
+
+
+def jack_interval_class(context, side, a, b):
+    other = 1 - side
+    if overlaps(context['busy'][other], a, b) and not overlaps(context['hard'][other], a, b):
+        return 'assisted'
+    if covers(context['busy'][other], a, b):
+        return 'one-hand'
+    ss = context['starts'][other]
+    i = bisect_right(ss, a)
+    if not overlaps(context['busy'][other], a, b) and not (i < len(ss) and ss[i] < b):
+        return 'two-hand'
+    return 'mixed'
+
+
+def jack_intervals(chart, timing, thresholds, profiles=None):
+    context = jack_context(chart, timing, thresholds, profiles)
+    lanes = [[] for _ in BUTTON_NAMES]
+    for kind, lane, y, length in _button_events(chart):
+        lanes[lane if kind == 'bt' else lane + 4].append((y, length))
+    for lane, notes in enumerate(lanes):
+        notes.sort()
+        for (a, length), (b, next_length) in zip(notes, notes[1:]):
+            if next_length or b < a + length:
+                continue
+            a += length
+            side = home(lane)
+            if covers(context['moving'][side], a, b) and not overlaps(context['moving'][1 - side], a, b):
+                side = 1 - side
+            cls = jack_interval_class(context, side, a, b)
+            yield lane, a, b, length, cls
+
+
+JACK_BANDS_MS = (0, 60, 70, 80, 90, 100, 120)
+
+
+def jack_band(dt):
+    # Integrating BPMs can place exact millisecond boundaries just below a bin.
+    return max(0, bisect_right(JACK_BANDS_MS, dt + 1e-6) - 1)
+
+
+def jack_key(group, cls, kind):
+    return f'jack:{group}:{cls}:{kind}'
+
+
+def _apply_verdict(out, verdicts, key, level, where):
+    if key not in verdicts:
+        return False
+    verdict = verdicts[key]
+    if verdict == 'forbid':
+        out.append(Finding('warning', 'placement-forbidden', where, f'{key}: forbidden by human verdict'))
+    elif isinstance(verdict, dict) and level < verdict['min_level']:
+        out.append(Finding('warning', 'placement-min-level', where,
+                           f'{key}: requires Lv{verdict["min_level"]}, chart is Lv{level:g}'))
+    return True
 
 
 def lint(chart: dict, analysis: dict | None = None) -> list[Finding]:
     timing = TimingMap(chart["beat"])
     out: list[Finding] = []
     events = sorted(_button_events(chart), key=lambda e: e[2])
-    lasers = list(_laser_spans(chart))
+    policy = hand_policy()
+    verdicts = placement_verdicts()
+    thresholds = policy['thresholds']
+    level = float(chart.get('meta', {}).get('level', 0) or 0)
+    group = level_group(level)
+    profiles = laser_demands(chart, timing)
 
-    # Jacks: same lane, chip/long starts too close in time.
-    last: dict[tuple[str, int], int] = {}
-    for kind, lane, y, length in events:
-        key = (kind, lane)
-        if key in last:
-            prev_y = last[key]
-            dt = timing.pulse_to_sec(y) - timing.pulse_to_sec(prev_y)
-            if dt < JACK_MIN_SEC:
-                name = LANES[lane] if kind == "bt" else "FX-" + FX_LANES[lane]
-                out.append(Finding("warning", "fast-jack", _where(timing, chart, y),
-                                   f"{name} repeats after {dt * 1000:.0f} ms"))
-        last[key] = y + length
+    for lane, a, b, _, cls in jack_intervals(chart, timing, thresholds, profiles):
+        cls = 'one-hand' if cls == 'mixed' else cls
+        kind = 'BT' if lane < 4 else 'FX'
+        if _apply_verdict(out, verdicts, jack_key(group, cls, kind), level, _where(timing, chart, b)):
+            continue
+        row = policy['jacks'][group][cls][kind]
+        limit, minimum = row['p1_ms'], row['robust_min_ms']
+        dt = (timing.pulse_to_sec(b) - timing.pulse_to_sec(a)) * 1000
+        warning = minimum is not None and dt < minimum - 1e-6
+        if warning or (limit is not None and dt < limit - 1e-6):
+            rule = 'fast-jack' if cls == 'two-hand' else 'fast-jack-one-hand'
+            out.append(Finding('warning' if warning else 'info', rule, _where(timing, chart, b),
+                               f'{jack_key(group, cls, kind)}: {BUTTON_NAMES[lane]} repeats after {dt:.1f} ms ({cls}); '
+                               f'official Lv{group} {kind} p1: {limit:.2f} ms; '
+                               f'5-chart minimum band: {minimum} ms'))
 
     # Very short long notes read as chips but must be held.
     for kind, lane, y, length in events:
@@ -135,20 +410,22 @@ def lint(chart: dict, analysis: dict | None = None) -> list[Finding]:
                 out.append(Finding("warning", "short-long", _where(timing, chart, y),
                                    f"long note of {length} pulses; use a chip or lengthen it"))
 
-    # Hand load: each active knob takes a hand; one hand covers two adjacent BT
-    # lanes plus the FX button under them (FX-L under A/B, FX-R under C/D).
-    starts = sorted({y for _, _, y, _ in events})
-    moving = [list(_moving_laser_ranges({"note": {"laser": [side]}}))
-              for side in chart.get("note", {}).get("laser", [])]
-    for y in starts:
-        knobs = sum(1 for ranges in moving if any(a <= y < b for a, b in ranges))
-        pressed = [(kind, lane) for kind, lane, ny, length in events
-                   if ny == y or (length and ny < y < ny + length)]
-        hands = knobs + _hands_for_buttons(pressed)
-        if hands > 2:
-            names = " ".join(LANES[l] if k == "bt" else "FX-" + FX_LANES[l] for k, l in pressed)
-            out.append(Finding("warning", "hand-overload", _where(timing, chart, y),
-                               f"{knobs} knob(s) + buttons {names} need {hands} hands"))
+    for y, key, _, _ in button_categories(chart, timing, thresholds, profiles):
+        if _apply_verdict(out, verdicts, key, level, _where(timing, chart, y)):
+            continue
+        if effective_hands(key) <= 2:
+            continue
+        row = policy['categories'].get(key)
+        if row is None or not any(v['count'] for v in row.values()):
+            out.append(Finding('warning', 'hand-impossible', _where(timing, chart, y),
+                               f'{key}: never observed in the official corpus'))
+            continue
+        evidence = row[group]
+        rate = evidence['per_100_measures']
+        if rate < policy['rare_per_100_measures']:
+            out.append(Finding('info', 'hand-rare', _where(timing, chart, y),
+                               f'{key}: official Lv{group}: {rate:.2f}/100 measures, '
+                               f'{evidence["charts"]} charts'))
 
     if analysis is not None:
         out.extend(_lint_against_audio(chart, timing, events, analysis))

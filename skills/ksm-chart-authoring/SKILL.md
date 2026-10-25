@@ -82,7 +82,7 @@ copy m4-11 -> m12 mirror
 - 解析テキストの強いオンセット（`X`）を中心に拾う。拾わない音があってよいが、**音の無い所には置かない**。
 - 一度に全曲を書かず、セクション単位で書いては 4 の確認を回す。
 - 密度の感覚: 4/4・BPM180 前後で「4 分＋ところどころ 8 分」を全編に置くと avg NPS は 4 を超え、Lv12 前後になる。CHALLENGE 以下は 4 分主体にして 8 分は山場だけにする。
-- 小節頭に左右同時の直角を置いたら、その瞬間のボタンは避ける（`hand-overload` になる）。
+- 両つまみとボタンの同時配置は、つまみの傾斜・終点補正とレベル別の公式出現頻度を lint で確認する。
 
 ### 4. コンパイルと自己確認
 
@@ -94,7 +94,7 @@ uv run ksmauto render work/draft.ksmd --measures 0-31 -o work/page.png
 ```
 
 - compile エラーは全件まとめて出る。行番号の箇所を直す。
-- lint: `hand-overload`（手が 3 本要る）、`fast-jack`（縦連が速すぎ）は原則ゼロにする。`unaligned` が出たら、音の無い位置のノーツを解析と照合して直す。`empty-loud` は意図した休憩でなければ埋める。
+- lint: `hand-impossible`（全公式群で未観測の組合せ、warning）は修正する。`hand-rare`（対象群で0.05/100小節未満、info）は出現頻度と意図を確認する。`fast-jack`（両手）／`fast-jack-one-hand`（片手・mixed・補正利用の assisted）は群別・BT/FX別の公式 p1 未満を info で示す。gentle/ending のつまみは補正利用として別分類する。閾値表は `docs/placement-rules.md`、人手確認候補は `docs/placement-review.md`。`unaligned` が出たら、音の無い位置のノーツを解析と照合して直す。`empty-loud` は意図した休憩でなければ埋める。
 - `thin`（歌っているのにボタンが薄い）は「楽器別の型」のボーカルの型で埋めるか、休符だと伝わる締めと入りを作る。
 - stats の `level_estimate` が目標 ±1.5 に入るまで密度を調整する。
 - render の PNG を開いて目で見る: 同じ形の繰り返しが単調すぎないか、レーザーとボタンが同じ手に重なっていないか、山場で密度が上がっているか。
