@@ -9,6 +9,13 @@ from eval.hand_policy import chart_evidence, build_policy, review_rows, write_re
 from eval.placement_rules import aggregate, quantiles, tally, verdict
 
 
+@pytest.fixture(autouse=True)
+def no_verdicts(monkeypatch):
+    # Tests that need verdicts set their own; the shipped ones must not leak in.
+    monkeypatch.setattr('ksmauto.lint.placement_verdicts', lambda: {})
+    monkeypatch.setattr('eval.hand_policy.placement_verdicts', lambda: {})
+
+
 FIXTURES = Path(__file__).parent / 'fixtures' / 'libkson'
 
 
@@ -254,3 +261,61 @@ def test_review_lists_all_overloaded_categories_and_24_jack_rows(tmp_path):
     path = tmp_path / 'review.md'
     write_review([row], policy, path)
     assert path.read_text().count('| 未判定 |') == 25
+
+
+@pytest.mark.parametrize('level,group', [(16, 'ksm'), (17, '17'), (17.5, '18'), (19, '19-20')])
+def test_sources_use_chart_level(tmp_path, monkeypatch, level, group):
+    import json
+    from eval import placement_rules
+    from ksmauto.lint import level_group
+
+    out = tmp_path / 'out'
+    decoded = out / 'sdvxin_kson'
+    decoded.mkdir(parents=True)
+    c = chart(bt=[[0, 10], [], [], []])
+    c['meta'] = {'level': level}
+    (decoded / 'tiny.json').write_text(json.dumps(c))
+    row = {'key': 'tiny', 'title': 'Tiny', 'level': 17.5, 'disp_bpm': '120',
+           'decoded': {'chip': 2}, 'official': {'chip': 2}, 'stats': {'max_bpm': 120}}
+    (out / 'sdvxin_stats.jsonl').write_text(json.dumps(row) + '\n')
+    official = tmp_path / 'corpus' / 'official'
+    official.mkdir(parents=True)
+    (official / 'tiny.ksh').write_text(f'title=Tiny\nlevel={level}\n--\n0000|00|--\n--\n')
+    monkeypatch.setattr(placement_rules, 'ROOT', tmp_path)
+    tasks, _ = placement_rules.sources()
+    assert len(tasks) == 2
+    for path, meta in tasks:
+        loaded = placement_rules.load_chart(path)
+        assert meta['group'] == level_group(loaded['meta']['level'])
+    assert tasks[0][1]['group'] == group
+    assert tasks[0][1]['level'] == level
+    assert tasks[1][1]['group'] == level_group(int(level))
+
+
+@pytest.mark.parametrize('verdict,rule', [('forbid', 'placement-forbidden'),
+                                       ({'min_level': 18}, 'placement-min-level')])
+def test_audit_keeps_verdict_category_and_jack_keys(tmp_path, monkeypatch, verdict, rule):
+    import json
+    from eval.hand_policy import audit_task, doc_intro
+    from ksmauto.lint import button_categories
+
+    c = chart(bt=[[0, 10], [], [], []])
+    c['meta'] = {'level': 17.4}
+    key = next(button_categories(c, TimingMap(c['beat']), hand_policy()['thresholds']))[1]
+    jack = 'jack:17:two-hand:BT'
+    monkeypatch.setattr('ksmauto.lint.placement_verdicts', lambda: {key: verdict, jack: verdict})
+    path = tmp_path / 'tiny.json'
+    path.write_text(json.dumps(c))
+    group, counts, rules, categories = audit_task((str(path), {'group': '17'}))
+    assert group == '17'
+    assert counts == {'warning': 3}
+    assert rules == {rule: {'warning': 3}}
+    assert categories == {key: {'warning': 2}, jack: {'warning': 1}}
+    rates = {group: {'counts': counts, 'rules': rules,
+                    'per_100_measures': {'warning': 3, 'info': 0},
+                    'categories': {k: {'counts': v, 'per_100_measures': {'warning': v['warning'], 'info': 0}}
+                                   for k, v in categories.items()}}}
+    policy = {'categories': {}, 'groups': {group: {'measures': 100}}}
+    doc = '\n'.join(doc_intro(policy, rates))
+    assert '| 17 | 2.00000 | 0.00000 | 3.00000 | 0.00000 |' in doc
+    assert rule not in doc.split('目標未達の内訳')[1]

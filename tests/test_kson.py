@@ -151,3 +151,10 @@ def test_unknown_fields_warn():
 def test_dumps_rejects_nonfinite_numbers():
     with pytest.raises(ValueError):
         dumps_kson({"value": float("nan")})
+
+
+@pytest.mark.parametrize("level", [1, 17.4, 17.5, 18.9, 20])
+def test_numeric_level(level):
+    c = minimal()
+    c["meta"]["level"] = level
+    assert validate(c) == []

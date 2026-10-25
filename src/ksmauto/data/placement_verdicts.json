@@ -1,1 +1,28 @@
-{}
+{
+ "ending,ending|2|home": {
+  "min_level": 18
+ },
+ "ending,still|2|home": "allow",
+ "gentle,ending|2|home": {
+  "min_level": 18
+ },
+ "gentle,gentle|2|home": "allow",
+ "gentle,still|2|home": "allow",
+ "slam,ending|1|crossing": "allow",
+ "slam,ending|1|home": "allow",
+ "slam,ending|2|home": "allow",
+ "slam,gentle|1|crossing": "allow",
+ "slam,gentle|1|home": "allow",
+ "slam,gentle|2|home": "allow",
+ "slam,slam|1|home": "allow",
+ "slam,slam|2|home": "forbid",
+ "slam,still|2|home": "allow",
+ "steep,ending|1|crossing": {
+  "min_level": 19
+ },
+ "steep,ending|1|home": "allow",
+ "steep,ending|2|home": "allow",
+ "steep,gentle|1|home": "allow",
+ "steep,steep|1|home": "allow",
+ "steep,still|2|home": "allow"
+}

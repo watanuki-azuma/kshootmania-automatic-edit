@@ -30,7 +30,7 @@ def json_chart(tmp_path):
 def test_json_conversion(json_chart):
     chart = load_sdvxin(json_chart)
     assert chart['meta'] == {'title': 'Inline', 'artist': 'Test', 'chart_author': 'sdvx.in transcription',
-                             'difficulty': 3, 'level': 18, 'disp_bpm': '180-300',
+                             'difficulty': 3, 'level': 18.4, 'disp_bpm': '180-300',
                              'information': 'sdvx.in 18.4'}
     assert chart['beat'] == {'bpm': [[0, 180.0], [960, 300.0]],
                              'time_sig': [[0, [4, 4]], [2, [3, 4]], [4, [4, 4]]]}
@@ -163,3 +163,19 @@ def test_corpus_hold_and_laser_counts(corpus_reports):
         rate = sum(r['matches'][kind] for r in rows) / len(rows)
         assert rate >= 0.8, (kind, [(r['key'], r['decoded'][kind], r['official'][kind])
                                     for r in rows if not r['matches'][kind]])
+
+
+@pytest.mark.parametrize('level,group', [(17.4, '17'), (17.5, '18'), (18.9, '18')])
+def test_decimal_level_survives_cli_decode(json_chart, tmp_path, level, group):
+    from ksmauto.lint import level_group
+
+    path = json_chart / 'meta.json'
+    meta = json.loads(path.read_text())
+    meta['level'] = level
+    path.write_text(json.dumps(meta))
+    output = tmp_path / 'decoded.kson'
+    assert main(['sdvxin', str(json_chart), '-o', str(output)]) == 0
+    c = load_kson(output)
+    assert c['meta']['level'] == level
+    assert level_group(c['meta']['level']) == group
+    assert not validate(c)

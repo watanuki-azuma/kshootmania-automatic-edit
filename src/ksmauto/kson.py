@@ -247,7 +247,7 @@ def validate(chart) -> list[Issue]:
         if kind == "difficulty":
             return isinstance(v, str) or (uint(v) and v <= 3)
         if kind == "level":
-            return uint(v) and 1 <= v <= 20
+            return number(v) and 1 <= v < 21  # sdvx.in levels go up to 20.x
         if kind == "version":
             return type(v) is int and v == 1
         if kind in ("width", "direction", "decay"):

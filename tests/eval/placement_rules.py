@@ -490,7 +490,11 @@ def sources():
             tasks.append((str(path), meta))
     for path in sorted((ROOT / 'corpus' / 'official').rglob('*.ksh')):
         key = 'ksm:' + path.relative_to(ROOT / 'corpus' / 'official').as_posix()
-        tasks.append((str(path), {'key': key, 'group': 'ksm', 'file': path.name}))
+        tasks.append((str(path), {'key': key, 'file': path.name}))
+    for path, meta in tasks:
+        chart = load_chart(path)
+        meta['level'] = chart.get('meta', {}).get('level')
+        meta['group'] = level_group(meta['level'])
     return tasks, {'stats_rows': len(raw), 'stats_decode_errors': sum('error' in r for r in raw),
                    'stats_rejected': sum(not usable(r) for r in raw), 'source_issues': issues}
 
@@ -510,7 +514,7 @@ def fingerprint(path, meta, version):
 def mine(task):
     path, meta, stamp, thresholds = task
     try:
-        chart = load_chart(path, meta)
+        chart = load_chart(path)
         meta = {**meta, 'title': meta.get('title', chart.get('meta', {}).get('title', '')),
                 'level': meta.get('level', chart.get('meta', {}).get('level'))}
         return {'meta': meta, 'fingerprint': stamp, 'tally': tally(chart, thresholds),
@@ -630,7 +634,7 @@ def write_doc(report, path):
     d = report['inputs']
     lines += ['', f'SDVX: {d["stats_rows"]} 統計行中 usable 不適合 {d["stats_rejected"]}（元 decode エラー {d["stats_decode_errors"]} を含む）。'
               f'採掘時エラー／欠落 {len(report["errors"])} 件。曲線レーザー採用 {sum(g["curve_charts"] for g in report["groups"].values())} 譜面。'
-              'usable は chip 数・最高 BPM の検査であり、レーザー・long の転記精度までは保証しない。KSM は別群で集計する。', '',
+              'usable は chip 数・最高 BPM の検査であり、レーザー・long の転記精度までは保証しない。KSM も meta.level で同じ群に集計する。', '',
               '再現: `uv run python tests/eval/placement_rules.py`。'
               '入力のサイズ・mtime、コード、メタ情報が変わるとキャッシュを無効化する。'
               '全形状・レーン内訳・群ごと最大5例は `out/placement_rules.json`、譜面別キャッシュは '

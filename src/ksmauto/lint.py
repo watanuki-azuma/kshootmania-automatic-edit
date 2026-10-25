@@ -126,6 +126,10 @@ def placement_verdicts():
     return json.loads(files('ksmauto').joinpath('data/placement_verdicts.json').read_text(encoding='utf-8'))
 
 
+# A min_level verdict names a review group: Lv18 means the 17.5-18.9 group and up.
+GROUP_ORDER = ('ksm', '17', '18', '19-20')
+
+
 def level_group(level):
     level = float(level or 0)
     if level < 17:
@@ -373,7 +377,7 @@ def _apply_verdict(out, verdicts, key, level, where):
     verdict = verdicts[key]
     if verdict == 'forbid':
         out.append(Finding('warning', 'placement-forbidden', where, f'{key}: forbidden by human verdict'))
-    elif isinstance(verdict, dict) and level < verdict['min_level']:
+    elif isinstance(verdict, dict) and GROUP_ORDER.index(level_group(level)) < GROUP_ORDER.index(level_group(verdict['min_level'])):
         out.append(Finding('warning', 'placement-min-level', where,
                            f'{key}: requires Lv{verdict["min_level"]}, chart is Lv{level:g}'))
     return True

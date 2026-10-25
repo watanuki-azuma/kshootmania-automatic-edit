@@ -10,19 +10,15 @@ from pathlib import Path
 
 from ksmauto.ksh import load_ksh
 from ksmauto.lint import (JACK_BANDS_MS, button_categories, effective_hands,
-                          jack_band, jack_intervals, jack_key, laser_demands, lint)
+                          jack_band, jack_intervals, jack_key, laser_demands, lint, placement_verdicts)
 from ksmauto.timing import TimingMap
 
 GROUPS = ('17', '18', '19-20', 'ksm')
 JACK_CLASSES = ('two-hand', 'assisted', 'one-hand')
 
 
-def load_chart(path, meta):
-    c = load_ksh(path) if path.endswith('.ksh') else json.loads(Path(path).read_text(encoding='utf-8'))
-    # The decoder floors levels; use the source's decimal level for this audit.
-    if meta['group'] != 'ksm':
-        c.setdefault('meta', {})['level'] = meta['level']
-    return c
+def load_chart(path):
+    return load_ksh(path) if path.endswith('.ksh') else json.loads(Path(path).read_text(encoding='utf-8'))
 
 
 def chart_evidence(chart, thresholds):
@@ -105,6 +101,18 @@ def review_rows(rows, policy):
             if effective_hands(key) > 2]
 
 
+def verdict_label(key):
+    v = placement_verdicts().get(key)
+    if v is None:
+        return '未判定'
+    if isinstance(v, dict):
+        if 'min_level' in v:
+            return f'Lv{v["min_level"]}以上'
+        ms = lambda x: 'なし' if x is None else f'{x:g} ms'
+        return f'警告<{ms(v["warn_ms"])} / 注意<{ms(v["info_ms"])}'
+    return {'allow': '許可', 'forbid': '禁止'}[v]
+
+
 def write_review(rows, policy, path):
     lines = ['# 配置の人手レビュー', '',
              '開始時刻のボタン集合（開始＋保持中、終端は除く）を物理カテゴリで集約。'
@@ -129,7 +137,7 @@ def write_review(rows, policy, path):
         cells = [f'{groups[g]["count"]} / {groups[g]["charts"]} / {groups[g]["per_100_measures"]:.5f}' for g in GROUPS]
         ex = '<br>'.join(g + ': ' + '、'.join(f'「{title.replace("|", "／")}」m{m}' for title, m in examples[g])
                          for g in GROUPS if examples[g])
-        lines.append(f'| {key.replace("|", "&#124;")} | {effective_hands(key):g} | ' + ' | '.join(cells) + f' | {ex} | 未判定 |')
+        lines.append(f'| {key.replace("|", "&#124;")} | {effective_hands(key):g} | ' + ' | '.join(cells) + f' | {ex} | {verdict_label(key)} |')
     lines += ['', 'ジャックは mixed を one-hand に合算。各時間帯セルは100小節あたり、'
               'p1 は従来の1パーセンタイル（ms）。警告下限は同群の5譜面以上に現れた最短帯の下端。'
               '帯は左端を含み右端を含まない。120 ms以上も下限導出のため集計する。', '',
@@ -141,19 +149,19 @@ def write_review(rows, policy, path):
                 row = policy['jacks'][g][cls][kind]
                 cells = [f'{b["per_100_measures"]:.3f}' for b in row['bands'][:6]]
                 cells += ['—' if row[k] is None else f'{row[k]:.3f}' for k in ('p1_ms', 'robust_min_ms')]
-                lines.append(f'| {jack_key(g, cls, kind)} | ' + ' | '.join(cells) + ' | 未判定 |')
+                lines.append(f'| {jack_key(g, cls, kind)} | ' + ' | '.join(cells) + f' | {verdict_label(jack_key(g, cls, kind))} |')
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
 def audit_task(task):
     path, meta = task
-    c = load_chart(path, meta)
+    c = load_chart(path)
     findings = lint(c)
     counts = Counter(f.level for f in findings)
     rules, categories = defaultdict(Counter), defaultdict(Counter)
     for f in findings:
         rules[f.rule][f.level] += 1
-        if f.rule.startswith(('hand-', 'fast-jack')):
+        if f.rule.startswith(('hand-', 'fast-jack', 'placement-')):
             categories[f.message.split(': ', 1)[0]][f.level] += 1
     return meta['group'], dict(counts), dict(rules), dict(categories)
 
@@ -193,7 +201,8 @@ def doc_intro(policy, rates):
              'assistedは反対手の占有がgentle/endingのみ、mixedは片手分布へ合算。',
              '- `placement_verdicts.json` のカテゴリ／ジャック行キーに人手判断があれば優先する。'
              '`allow` は抑制、`forbid` は `placement-forbidden` warning、`{"min_level": x}` はx未満で '
-             '`placement-min-level` warning、x以上なら抑制。初期値は空。',
+             '`placement-min-level` warning、x以上なら抑制（xは群で比較し、18は17.5以上）。ジャック行は `{"warn_ms": x, "info_ms": y}` で閾値を置き換える'
+             '（null はその段階なし）。初期値は空。',
              '- 群: 17〜17.4→17、17.5〜18.9→18、19以上→19-20、17未満→ksm。別群へのフォールバックはしない。'
              '欠測のジャック閾値は判定しない。',
              '- `short-long` warning（1/8拍未満）と音源指定時の after-audio / unaligned / empty-loud / thin は維持。', '',
@@ -202,16 +211,15 @@ def doc_intro(policy, rates):
              '集計値のみのパッケージ表は `src/ksmauto/data/hand_categories.json`。'
              '群別の件数・譜面数・頻度と各群最大3例、およびジャックp1は [placement-review.md](placement-review.md)。', '',
              '### コーパスでの実行結果', '',
-             '学習と同じコーパスへの再適用。SDVXの小数レベルはソースからメモリ上で復元する。'
-             'KSMは集計上別群だがCLIは入力のmeta.levelで群を選ぶため、KSMのLv17以上では学習群と検査群が異なる。'
+             '学習と同じコーパスへの再適用。出自によらず入力のmeta.levelで学習・検査の群を選ぶ。'
              '目標はwarning 0、info <1/100小節。手数規則と全lintを分けて示す。', '',
              '| 群 | 手数 warning /100小節 | 手数 info /100小節 | 全 warning /100小節 | 全 info /100小節 |',
              '|---|---:|---:|---:|---:|']
     for g, r in rates.items():
         hand = Counter()
-        for rule, counts in r['rules'].items():
-            if rule.startswith('hand-'):
-                hand.update(counts)
+        for key, category in r['categories'].items():
+            if not key.startswith('jack:'):
+                hand.update(category['counts'])
         div = max(policy['groups'][g]['measures'], 1) / 100
         lines.append(f'| {g} | {hand["warning"] / div:.5f} | {hand["info"] / div:.5f} | '
                      f'{r["per_100_measures"]["warning"]:.5f} | {r["per_100_measures"]["info"]:.5f} |')
@@ -224,7 +232,7 @@ def doc_intro(policy, rates):
             v = c['per_100_measures']
             lines.append(f'| {g} | {key.replace("|", "&#124;")} | {v["warning"]:.5f} | {v["info"]:.5f} |')
         for rule, c in r['rules'].items():
-            if not rule.startswith(('hand-', 'fast-jack')):
+            if not rule.startswith(('hand-', 'fast-jack', 'placement-')):
                 div = max(policy['groups'][g]['measures'], 1) / 100
                 lines.append(f'| {g} | {rule} | {c.get("warning", 0) / div:.5f} | {c.get("info", 0) / div:.5f} |')
     return [*lines, '']

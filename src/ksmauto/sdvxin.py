@@ -21,7 +21,7 @@ def _base(meta):
         'format_version': 1,
         'meta': {'title': meta['title'], 'artist': meta['artist'],
                  'chart_author': 'sdvx.in transcription', 'difficulty': 3,
-                 'level': math.floor(level), 'disp_bpm': str(meta.get('bpm', '')),
+                 'level': level, 'disp_bpm': str(meta.get('bpm', '')),
                  'information': f'sdvx.in {level:g}'},
         'beat': {'bpm': [], 'time_sig': [[0, [4, 4]]]},
         'note': {'bt': [[] for _ in range(4)], 'fx': [[], []], 'laser': [[], []]},

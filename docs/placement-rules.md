@@ -6,7 +6,7 @@
 - 実効手数＝ボタン手数＋slam/steep 各1＋gentle/ending 各0.5。2以下は頻度検査をしない。2超で全公式群（KSM含む）未観測なら `hand-impossible` warning、対象群で0.05/100小節未満なら `hand-rare` info。
 - レーザーの phase 2 定義を維持: slam は前30〜後31 pulse未満、ending は連続移動終点まで50 ms以内、steep は32通常幅/秒超、その他の移動はgentle、静止・無しはstill。slam→ending→steepの順に優先。速度は局所BPM・幅・曲線の微分を使い、傾斜途中の点は移動終点にしない。
 - `fast-jack`（両手）／`fast-jack-one-hand`（片手・mixed・assisted）: 群・BT/FX別の従来p1未満をinfo。同群の5譜面以上で観測された最短帯の下端未満だけwarning。帯は <60 / 60–70 / 70–80 / 80–90 / 90–100 / 100–120 / 120 ms以上。assistedは反対手の占有がgentle/endingのみ、mixedは片手分布へ合算。
-- `placement_verdicts.json` のカテゴリ／ジャック行キーに人手判断があれば優先する。`allow` は抑制、`forbid` は `placement-forbidden` warning、`{"min_level": x}` はx未満で `placement-min-level` warning、x以上なら抑制。ジャック行は `{"warn_ms": x, "info_ms": y}` で閾値を置き換える（null はその段階なし）。初期値は空。
+- `placement_verdicts.json` のカテゴリ／ジャック行キーに人手判断があれば優先する。`allow` は抑制、`forbid` は `placement-forbidden` warning、`{"min_level": x}` はx未満で `placement-min-level` warning、x以上なら抑制（xは群で比較し、18は17.5以上）。ジャック行は `{"warn_ms": x, "info_ms": y}` で閾値を置き換える（null はその段階なし）。初期値は空。
 - 群: 17〜17.4→17、17.5〜18.9→18、19以上→19-20、17未満→ksm。別群へのフォールバックはしない。欠測のジャック閾値は判定しない。
 - `short-long` warning（1/8拍未満）と音源指定時の after-audio / unaligned / empty-loud / thin は維持。
 
@@ -14,63 +14,46 @@
 
 ### コーパスでの実行結果
 
-学習と同じコーパスへの再適用。SDVXの小数レベルはソースからメモリ上で復元する。KSMは集計上別群だがCLIは入力のmeta.levelで群を選ぶため、KSMのLv17以上では学習群と検査群が異なる。目標はwarning 0、info <1/100小節。手数規則と全lintを分けて示す。
+学習と同じコーパスへの再適用。出自によらず入力のmeta.levelで学習・検査の群を選ぶ。目標はwarning 0、info <1/100小節。手数規則と全lintを分けて示す。
 
 | 群 | 手数 warning /100小節 | 手数 info /100小節 | 全 warning /100小節 | 全 info /100小節 |
 |---|---:|---:|---:|---:|
-| 17 | 0.00000 | 0.11372 | 0.10175 | 6.74826 |
-| 18 | 0.00000 | 0.10889 | 0.27421 | 7.28392 |
-| 19-20 | 0.00000 | 0.14832 | 0.20066 | 8.27081 |
-| ksm | 0.00000 | 0.00000 | 0.49428 | 0.37071 |
+| 17 | 0.14620 | 0.00000 | 0.24765 | 6.62092 |
+| 18 | 0.00000 | 0.00000 | 0.27396 | 7.16836 |
+| 19-20 | 0.00000 | 0.00000 | 0.19990 | 8.09143 |
+| ksm | 0.00000 | 0.00000 | 0.54127 | 2.02977 |
 
 目標未達の内訳（件数ではなく100小節あたり。頻度境界は目標に合わせて変更しない）:
 
 | 群 | カテゴリ／既存規則 | warning /100小節 | info /100小節 |
 |---|---|---:|---:|
-| 17 | gentle,ending&#124;2&#124;home | 0.00000 | 0.04190 |
-| 17 | jack:17:assisted:BT | 0.01197 | 0.52969 |
-| 17 | jack:17:assisted:FX | 0.02095 | 0.08080 |
-| 17 | jack:17:one-hand:BT | 0.00898 | 4.50383 |
-| 17 | jack:17:one-hand:FX | 0.00299 | 0.99354 |
-| 17 | jack:17:two-hand:BT | 0.02993 | 0.43093 |
-| 17 | jack:17:two-hand:FX | 0.02693 | 0.09576 |
-| 17 | slam,ending&#124;2&#124;home | 0.00000 | 0.00599 |
-| 17 | slam,gentle&#124;1&#124;crossing | 0.00000 | 0.02993 |
-| 17 | slam,gentle&#124;2&#124;home | 0.00000 | 0.01796 |
-| 17 | slam,slam&#124;1&#124;home | 0.00000 | 0.01496 |
-| 17 | slam,slam&#124;2&#124;home | 0.00000 | 0.00299 |
-| 18 | gentle,ending&#124;2&#124;home | 0.00000 | 0.01584 |
-| 18 | jack:18:assisted:BT | 0.01386 | 0.51081 |
-| 18 | jack:18:assisted:FX | 0.00198 | 0.10196 |
-| 18 | jack:18:one-hand:BT | 0.17819 | 4.76256 |
-| 18 | jack:18:one-hand:FX | 0.06336 | 1.03250 |
-| 18 | jack:18:two-hand:BT | 0.00000 | 0.61178 |
-| 18 | jack:18:two-hand:FX | 0.01683 | 0.15542 |
-| 18 | slam,ending&#124;2&#124;home | 0.00000 | 0.01980 |
-| 18 | slam,gentle&#124;2&#124;home | 0.00000 | 0.04356 |
-| 18 | slam,slam&#124;1&#124;home | 0.00000 | 0.02376 |
-| 18 | steep,ending&#124;1&#124;home | 0.00000 | 0.00495 |
-| 18 | steep,gentle&#124;1&#124;home | 0.00000 | 0.00099 |
-| 19-20 | jack:19-20:assisted:BT | 0.01745 | 0.53656 |
-| 19-20 | jack:19-20:assisted:FX | 0.01309 | 0.10469 |
-| 19-20 | jack:19-20:one-hand:BT | 0.00872 | 5.27831 |
-| 19-20 | jack:19-20:one-hand:FX | 0.00436 | 1.21270 |
-| 19-20 | jack:19-20:two-hand:BT | 0.00000 | 0.79829 |
-| 19-20 | jack:19-20:two-hand:FX | 0.03054 | 0.19194 |
-| 19-20 | slam,ending&#124;2&#124;home | 0.00000 | 0.04798 |
-| 19-20 | slam,gentle&#124;2&#124;home | 0.00000 | 0.03926 |
-| 19-20 | slam,slam&#124;1&#124;home | 0.00000 | 0.03054 |
-| 19-20 | steep,ending&#124;1&#124;crossing | 0.00000 | 0.00436 |
-| 19-20 | steep,ending&#124;2&#124;home | 0.00000 | 0.00436 |
-| 19-20 | steep,steep&#124;1&#124;home | 0.00000 | 0.00436 |
-| 19-20 | steep,still&#124;2&#124;home | 0.00000 | 0.01745 |
-| 19-20 | short-long | 0.12650 | 0.00000 |
-| ksm | jack:17:one-hand:BT | 0.00000 | 0.06179 |
-| ksm | jack:ksm:assisted:BT | 0.03089 | 0.00000 |
-| ksm | jack:ksm:one-hand:BT | 0.27804 | 0.00000 |
-| ksm | jack:ksm:one-hand:FX | 0.00000 | 0.03089 |
-| ksm | jack:ksm:two-hand:BT | 0.15446 | 0.24714 |
-| ksm | jack:ksm:two-hand:FX | 0.03089 | 0.03089 |
+| 17 | ending,ending&#124;2&#124;home | 0.10145 | 0.00000 |
+| 17 | gentle,ending&#124;2&#124;home | 0.04177 | 0.00000 |
+| 17 | jack:17:assisted:BT | 0.01193 | 0.52812 |
+| 17 | jack:17:assisted:FX | 0.02089 | 0.08056 |
+| 17 | jack:17:one-hand:BT | 0.00895 | 4.49649 |
+| 17 | jack:17:one-hand:FX | 0.00298 | 0.99060 |
+| 17 | jack:17:two-hand:BT | 0.02984 | 0.42966 |
+| 17 | jack:17:two-hand:FX | 0.02685 | 0.09548 |
+| 17 | slam,slam&#124;2&#124;home | 0.00298 | 0.00000 |
+| 18 | jack:18:assisted:BT | 0.01385 | 0.51033 |
+| 18 | jack:18:assisted:FX | 0.00198 | 0.10187 |
+| 18 | jack:18:one-hand:BT | 0.17802 | 4.75814 |
+| 18 | jack:18:one-hand:FX | 0.06330 | 1.03154 |
+| 18 | jack:18:two-hand:BT | 0.00000 | 0.61121 |
+| 18 | jack:18:two-hand:FX | 0.01681 | 0.15527 |
+| 19-20 | jack:19-20:assisted:BT | 0.01738 | 0.53450 |
+| 19-20 | jack:19-20:assisted:FX | 0.01304 | 0.10429 |
+| 19-20 | jack:19-20:one-hand:BT | 0.00869 | 5.25813 |
+| 19-20 | jack:19-20:one-hand:FX | 0.00435 | 1.20807 |
+| 19-20 | jack:19-20:two-hand:BT | 0.00000 | 0.79524 |
+| 19-20 | jack:19-20:two-hand:FX | 0.03042 | 0.19120 |
+| 19-20 | short-long | 0.12602 | 0.00000 |
+| ksm | jack:ksm:assisted:BT | 0.03383 | 0.00000 |
+| ksm | jack:ksm:one-hand:BT | 0.30447 | 1.69147 |
+| ksm | jack:ksm:one-hand:FX | 0.00000 | 0.03383 |
+| ksm | jack:ksm:two-hand:BT | 0.16915 | 0.27064 |
+| ksm | jack:ksm:two-hand:FX | 0.03383 | 0.03383 |
 
 以下の phase 1 比較表は旧手数モデルも残す。現在の lint 規則は上節のとおり。左手＝L つまみ・FL・BT A/B、右手＝R つまみ・FR・BT C/D を基本とする。つまみの「操作中」は `lint._moving_laser_ranges`（傾斜、直角の前30〜後31 pulse未満）。自側 long の保持も手を占有する。片つまみ中は空いた手が全レーンを担当できるが、同時押しの必要手数は `_legacy_hands_for_buttons`（隣接2位置、FL は B、FR は C の位置）による。
 
@@ -84,12 +67,12 @@
 
 | 群 | 譜面数 | 小節数 | レベル（譜面数） |
 |---|---:|---:|---|
-| 17 | 370 | 33,416 | 17.0: 370 |
-| 18 | 1034 | 101,017 | 17.5: 362、18.0: 32、18.1: 61、18.2: 80、18.3: 102、18.4: 104、18.5: 102、18.6: 90、18.7: 57、18.8: 37、18.9: 7 |
-| 19-20 | 203 | 22,924 | 19.0: 11、19.1: 20、19.2: 26、19.3: 24、19.4: 28、19.5: 18、19.6: 20、19.7: 18、19.8: 4、19.9: 3、20.0: 3、20.1: 1、20.2: 6、20.3: 4、20.4: 1、20.5: 3、20.6: 8、20.7: 2、20.8: 1、20.9: 2 |
-| ksm | 36 | 3,237 | 3: 2、4: 3、5: 2、6: 2、7: 1、9: 3、10: 3、11: 2、12: 2、13: 2、14: 4、15: 4、16: 3、17: 1、18: 1、19: 1 |
+| 17 | 371 | 33,515 | 17.0: 370、17: 1 |
+| 18 | 1035 | 101,111 | 17.5: 362、18.0: 32、18: 1、18.1: 61、18.2: 80、18.3: 102、18.4: 104、18.5: 102、18.6: 90、18.7: 57、18.8: 37、18.9: 7 |
+| 19-20 | 204 | 23,012 | 19.0: 11、19: 1、19.1: 20、19.2: 26、19.3: 24、19.4: 28、19.5: 18、19.6: 20、19.7: 18、19.8: 4、19.9: 3、20.0: 3、20.1: 1、20.2: 6、20.3: 4、20.4: 1、20.5: 3、20.6: 8、20.7: 2、20.8: 1、20.9: 2 |
+| ksm | 33 | 2,956 | 3: 2、4: 3、5: 2、6: 2、7: 1、9: 3、10: 3、11: 2、12: 2、13: 2、14: 4、15: 4、16: 3 |
 
-SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む）。採掘時エラー／欠落 0 件。曲線レーザー採用 5 譜面。usable は chip 数・最高 BPM の検査であり、レーザー・long の転記精度までは保証しない。KSM は別群で集計する。
+SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む）。採掘時エラー／欠落 0 件。曲線レーザー採用 5 譜面。usable は chip 数・最高 BPM の検査であり、レーザー・long の転記精度までは保証しない。KSM も meta.level で同じ群に集計する。
 
 再現: `uv run python tests/eval/placement_rules.py`。入力のサイズ・mtime、コード、メタ情報が変わるとキャッシュを無効化する。全形状・レーン内訳・群ごと最大5例は `out/placement_rules.json`、譜面別キャッシュは `out/placement_rules_cache.jsonl`（どちらもローカル専用）。
 
@@ -97,10 +80,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | 17 | 4,478 / 334 (90.3%) / 13.401 | —<br>cause:slam-padding-only: 4<br>cause:without-slam-padding: 4,474 | common |
-| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | 18 | 16,319 / 975 (94.3%) / 16.155 | —<br>cause:slam-padding-only: 53<br>cause:without-slam-padding: 16,266 | common |
-| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | 19-20 | 5,453 / 201 (99.0%) / 23.787 | —<br>cause:slam-padding-only: 37<br>cause:without-slam-padding: 5,416 | common |
-| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | ksm | 11 / 5 (13.9%) / 0.34 | —<br>cause:without-slam-padding: 11 | rare |
+| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | 17 | 4,478 / 334 (90.0%) / 13.361 | —<br>cause:slam-padding-only: 4<br>cause:without-slam-padding: 4,474 | common |
+| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | 18 | 16,321 / 976 (94.3%) / 16.142 | —<br>cause:slam-padding-only: 53<br>cause:without-slam-padding: 16,268 | common |
+| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | 19-20 | 5,453 / 201 (98.5%) / 23.696 | —<br>cause:slam-padding-only: 37<br>cause:without-slam-padding: 5,416 | common |
+| hand-overload | 旧 lint 比較用、開始時刻のつまみ数＋保持中を含むボタン必要手数 > 2（時刻数） | ksm | 9 / 4 (12.1%) / 0.304 | —<br>cause:without-slam-padding: 9 | rare |
 
 例: 「TYCOON」m39、「ALBIDA Powerless Mix」m37、「Ganymede kamome mix」m4
 
@@ -108,10 +91,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | 17 | 20,249 / 369 (99.7%) / 60.597 | BT_interval_ms [66.667/71.429/83.333/100/181.818]<br>FX_interval_ms [65.217/68.182/80.214/100/191.083]<br><75ms: 42 | common |
-| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | 18 | 80,920 / 1033 (99.9%) / 80.105 | BT_interval_ms [22.523/33.784/73.171/85.47/161.29]<br>FX_interval_ms [16.892/62.5/75.938/90.909/170.455]<br><75ms: 935 | common |
-| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | 19-20 | 23,579 / 203 (100.0%) / 102.857 | BT_interval_ms [47.17/50.251/64.103/73.171/136.364]<br>FX_interval_ms [45.455/56.818/67.568/78.947/142.857]<br><75ms: 1,199 | common |
-| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | ksm | 2,206 / 35 (97.2%) / 68.15 | BT_interval_ms [96.774/96.774/157.068/157.068/314.136]<br>FX_interval_ms [105.634/110.056/153.984/157.068/264.706]<br><75ms: 0 | common |
+| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | 17 | 20,360 / 370 (99.7%) / 60.749 | BT_interval_ms [66.667/71.429/83.333/100/180.18]<br>FX_interval_ms [65.217/68.182/80.214/100/191.083]<br><75ms: 42 | common |
+| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | 18 | 81,036 / 1034 (99.9%) / 80.146 | BT_interval_ms [22.523/33.784/73.171/85.47/161.29]<br>FX_interval_ms [16.892/62.5/75.992/90.909/170.455]<br><75ms: 935 | common |
+| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | 19-20 | 23,716 / 204 (100.0%) / 103.059 | BT_interval_ms [47.17/50.251/64.103/73.171/136.364]<br>FX_interval_ms [45.455/56.818/67.568/78.947/142.857]<br><75ms: 1,199 | common |
+| jack-two-hand | 同レーンの直前 chip／long 終端→chip。反対手が全区間自由（BT/FX 別、間隔上限なし） | ksm | 1,842 / 32 (97.0%) / 62.314 | BT_interval_ms [96.774/96.774/157.068/166.667/329.67]<br>FX_interval_ms [105.634/109.518/147.536/157.068/290.323]<br><75ms: 0 | common |
 
 例: 「Circuit Surfer」m29、「Demetel (Erixa ”MYTH” Remix)」m22、「君は Fantasista」m68
 
@@ -119,10 +102,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | 17 | 12,889 / 368 (99.5%) / 38.571 | BT_interval_ms [64.935/88.235/105.263/136.364/300]<br>FX_interval_ms [78.947/81.653/112.401/149.254/323.161]<br><75ms: 1 | common |
-| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | 18 | 46,480 / 1029 (99.5%) / 46.012 | BT_interval_ms [33.784/75/92.025/115.385/255.319]<br>FX_interval_ms [7.508/81.081/94.937/129.87/298.507]<br><75ms: 40 | common |
-| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | 19-20 | 13,358 / 202 (99.5%) / 58.271 | BT_interval_ms [62.5/62.5/81.081/107.143/217.391]<br>FX_interval_ms [72.115/76.3/90.361/109.091/260.87]<br><75ms: 45 | common |
-| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | ksm | 702 / 25 (69.4%) / 21.687 | BT_interval_ms [104.712/104.712/117.647/157.068/315.519]<br>FX_interval_ms [157.068/157.068/157.068/157.068/202.408]<br><75ms: 0 | common |
+| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | 17 | 13,020 / 369 (99.5%) / 38.848 | BT_interval_ms [64.935/88.235/105.263/136.364/300]<br>FX_interval_ms [78.947/81.659/112.5/149.254/322.581]<br><75ms: 1 | common |
+| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | 18 | 46,521 / 1030 (99.5%) / 46.01 | BT_interval_ms [33.784/75/92.025/115.385/255.319]<br>FX_interval_ms [7.508/81.081/94.937/129.87/298.507]<br><75ms: 40 | common |
+| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | 19-20 | 13,413 / 203 (99.5%) / 58.287 | BT_interval_ms [62.5/62.5/81.081/107.143/217.391]<br>FX_interval_ms [72.115/76.306/90.361/109.091/260.87]<br><75ms: 45 | common |
+| jack-one-hand | 反対手が全区間占有。lint閾値ではmixedも含める | ksm | 475 / 22 (66.7%) / 16.069 | BT_interval_ms [104.712/104.712/117.647/166.667/333.333]<br>FX_interval_ms [157.068/157.068/157.068/157.068/176.471]<br><75ms: 0 | common |
 
 例: 「Sephirot」m42、「Inscape」m27、「孤月群雲に沈む」m45
 
@@ -130,10 +113,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | 17 | 21,445 / 370 (100.0%) / 64.176 | BT_interval_ms [78.947/88.235/117.888/150/393.013]<br>FX_interval_ms [85.714/87.209/115.227/150/581.395] | common |
-| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | 18 | 65,065 / 1029 (99.5%) / 64.41 | BT_interval_ms [33.784/76.923/101.351/138.889/333.333]<br>FX_interval_ms [65.217/80.77/100/136.364/381.356] | common |
-| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | 19-20 | 16,109 / 202 (99.5%) / 70.271 | BT_interval_ms [57.252/70.354/82.003/113.208/285.714]<br>FX_interval_ms [43.478/72.779/90.09/108.696/285.714] | common |
-| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | ksm | 1,167 / 32 (88.9%) / 36.052 | BT_interval_ms [96.774/153.39/157.068/157.068/422.535]<br>FX_interval_ms [129.032/129.032/129.032/157.068/422.535] | common |
+| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | 17 | 21,563 / 371 (100.0%) / 64.338 | BT_interval_ms [78.947/88.235/118.11/150/392.157]<br>FX_interval_ms [85.714/87.209/115.385/150/572.338] | common |
+| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | 18 | 65,114 / 1030 (99.5%) / 64.399 | BT_interval_ms [33.784/76.923/101.351/138.889/333.333]<br>FX_interval_ms [65.217/80.781/100/136.364/382.816] | common |
+| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | 19-20 | 16,215 / 203 (99.5%) / 70.463 | BT_interval_ms [57.252/70.62/82.418/113.208/285.714]<br>FX_interval_ms [43.478/72.89/90.09/108.696/285.714] | common |
+| jack-assisted | 反対手の占有がgentle/endingのみの反復（別分布） | ksm | 894 / 29 (87.9%) / 30.244 | BT_interval_ms [96.774/142.296/157.068/176.213/471.204]<br>FX_interval_ms [129.032/129.032/129.032/157.068/477.538] | common |
 
 例: 「β」m91、「Re:Rose Gun Shoooot!」m72、「Next infection」m37
 
@@ -141,21 +124,21 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | 17 | 5,231 / 364 (98.4%) / 15.654 | run_hits [17/9/16]<br>hit_interval_ms [36.496/55.74/68.182/75/142.857]<br>chart_longest_run_hits [5/16/17] | common |
-| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | 18 | 17,279 / 1020 (98.6%) / 17.105 | run_hits [30/11/16]<br>hit_interval_ms [16.892/41.999/58.614/68.493/100]<br>chart_longest_run_hits [6/16.67/30] | common |
-| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | 19-20 | 4,233 / 202 (99.5%) / 18.465 | run_hits [47/11/21.376]<br>hit_interval_ms [21.739/33.333/46.524/55.556/84.746]<br>chart_longest_run_hits [7/23/47] | common |
-| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | ksm | 221 / 19 (52.8%) / 6.827 | run_hits [19/9/17.46]<br>hit_interval_ms [78.534/78.534/78.534/78.534/157.068]<br>chart_longest_run_hits [3.5/16.55/19] | common |
+| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | 17 | 5,257 / 365 (98.4%) / 15.686 | run_hits [19/9/16]<br>hit_interval_ms [36.496/55.855/68.182/75/142.857]<br>chart_longest_run_hits [5/16.3/19] | common |
+| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | 18 | 17,287 / 1021 (98.6%) / 17.097 | run_hits [30/11/16]<br>hit_interval_ms [16.892/42.007/58.658/68.493/100]<br>chart_longest_run_hits [6/16.66/30] | common |
+| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | 19-20 | 4,256 / 203 (99.5%) / 18.495 | run_hits [47/11/21.215]<br>hit_interval_ms [21.739/33.333/46.584/55.556/84.746]<br>chart_longest_run_hits [7/23/47] | common |
+| trill-one-hand | 反対手が全区間占有された AB／CD／BC の交互 chip、3 打以上の最大連鎖（連鎖数） | ksm | 164 / 16 (48.5%) / 5.548 | run_hits [12/7/11.185]<br>hit_interval_ms [78.534/78.534/78.534/78.534/166.667]<br>chart_longest_run_hits [0/10.4/12] | common |
 
-例: 「Game Over」m24、「Melty Sweets」m65、「星座が恋した瞬間を。」m83
+例: 「Re*harpoon」m3、「Game Over」m24、「Melty Sweets」m65
 
 ## 6. stream-density
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | 17 | 370 / 370 (100.0%) / 1.107 | peak_1s_nps [12/17/18]<br>peak_4s_nps [9.25/13.75/14.75]<br>stream16_max_sec [1.42/9.862/12.61] | common |
-| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | 18 | 1,034 / 1034 (100.0%) / 1.024 | peak_1s_nps [14/22/54]<br>peak_4s_nps [11.25/15.75/47.5]<br>stream16_max_sec [2.07/11.25/13.26] | common |
-| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | 19-20 | 203 / 203 (100.0%) / 0.886 | peak_1s_nps [18/26.98/28]<br>peak_4s_nps [13.75/19.99/20.5]<br>stream16_max_sec [2.51/15.371/35.63] | rare |
-| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | ksm | 36 / 36 (100.0%) / 1.112 | peak_1s_nps [7.5/15.6/17]<br>peak_4s_nps [5.75/10/10]<br>stream16_max_sec [0.17/2.659/3.16] | common |
+| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | 17 | 371 / 371 (100.0%) / 1.107 | peak_1s_nps [12/17/18]<br>peak_4s_nps [9.25/13.75/14.75]<br>stream16_max_sec [1.42/9.86/12.61] | common |
+| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | 18 | 1,035 / 1035 (100.0%) / 1.024 | peak_1s_nps [14/22/54]<br>peak_4s_nps [11.25/15.75/47.5]<br>stream16_max_sec [2.07/11.249/13.26] | common |
+| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | 19-20 | 204 / 204 (100.0%) / 0.886 | peak_1s_nps [18/26.97/28]<br>peak_4s_nps [13.75/19.985/20.5]<br>stream16_max_sec [2.505/15.327/35.63] | rare |
+| stream-density | ボタン開始時刻を和音＝1 として数える 1 秒／4 秒窓の最大 NPS（譜面数） | ksm | 33 / 33 (100.0%) / 1.116 | peak_1s_nps [7/13/13]<br>peak_4s_nps [5.5/10/10]<br>stream16_max_sec [0.11/2.702/3.16] | common |
 
 例: 「ロマンシングエスケープ」m2、「Sephirot」m71、「cross the future」m58
 
@@ -163,10 +146,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | 17 | 215,129 / 370 (100.0%) / 643.79 | —<br>free:flag:3plus-BT: 675<br>free:flag:4-BT: 288<br>free:flag:FX+two-home-BT: 37<br>free:flag:same-side-BT-FX: 4,764<br>knob:flag:3plus-BT: 34<br>knob:flag:4-BT: 3<br>knob:flag:FX+two-home-BT: 2<br>knob:flag:same-side-BT-FX: 1,252 | common |
-| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | 18 | 694,973 / 1034 (100.0%) / 687.976 | —<br>free:flag:3plus-BT: 3,429<br>free:flag:4-BT: 1,327<br>free:flag:FX+two-home-BT: 211<br>free:flag:same-side-BT-FX: 18,820<br>knob:flag:3plus-BT: 431<br>knob:flag:4-BT: 29<br>knob:flag:FX+two-home-BT: 45<br>knob:flag:same-side-BT-FX: 4,277 | common |
-| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | 19-20 | 172,365 / 203 (100.0%) / 751.898 | —<br>free:flag:3plus-BT: 1,350<br>free:flag:4-BT: 398<br>free:flag:FX+two-home-BT: 281<br>free:flag:same-side-BT-FX: 6,347<br>knob:flag:3plus-BT: 250<br>knob:flag:4-BT: 16<br>knob:flag:FX+two-home-BT: 56<br>knob:flag:same-side-BT-FX: 1,267 | common |
-| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | ksm | 11,668 / 36 (100.0%) / 360.457 | —<br>free:flag:3plus-BT: 84<br>free:flag:4-BT: 12<br>free:flag:FX+two-home-BT: 21<br>free:flag:same-side-BT-FX: 113<br>knob:flag:FX+two-home-BT: 3<br>knob:flag:same-side-BT-FX: 17 | common |
+| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | 17 | 215,751 / 371 (100.0%) / 643.745 | —<br>free:flag:3plus-BT: 681<br>free:flag:4-BT: 289<br>free:flag:FX+two-home-BT: 42<br>free:flag:same-side-BT-FX: 4,779<br>knob:flag:3plus-BT: 34<br>knob:flag:4-BT: 3<br>knob:flag:FX+two-home-BT: 2<br>knob:flag:same-side-BT-FX: 1,254 | common |
+| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | 18 | 695,513 / 1035 (100.0%) / 687.871 | —<br>free:flag:3plus-BT: 3,438<br>free:flag:4-BT: 1,327<br>free:flag:FX+two-home-BT: 220<br>free:flag:same-side-BT-FX: 18,853<br>knob:flag:3plus-BT: 431<br>knob:flag:4-BT: 29<br>knob:flag:FX+two-home-BT: 45<br>knob:flag:same-side-BT-FX: 4,280 | common |
+| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | 19-20 | 172,902 / 204 (100.0%) / 751.356 | —<br>free:flag:3plus-BT: 1,389<br>free:flag:4-BT: 403<br>free:flag:FX+two-home-BT: 281<br>free:flag:same-side-BT-FX: 6,350<br>knob:flag:3plus-BT: 250<br>knob:flag:4-BT: 16<br>knob:flag:FX+two-home-BT: 56<br>knob:flag:same-side-BT-FX: 1,267 | common |
+| chord-shapes | ボタン開始集合を、つまみ無し／片つまみに分けて全形状集計（単押しも含む時刻数） | ksm | 9,969 / 33 (100.0%) / 337.246 | —<br>free:flag:3plus-BT: 30<br>free:flag:4-BT: 6<br>free:flag:FX+two-home-BT: 7<br>free:flag:same-side-BT-FX: 62<br>knob:flag:FX+two-home-BT: 3<br>knob:flag:same-side-BT-FX: 12 | common |
 
 例: 「cloud」m0、「TYCOON」m0、「ALBIDA Powerless Mix」m0
 
@@ -174,10 +157,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | 17 | 4,449 / 356 (96.2%) / 13.314 | —<br>A: 1,147<br>FL: 3,302 | common |
-| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | 18 | 18,477 / 1019 (98.5%) / 18.291 | —<br>A: 5,839<br>FL: 12,638 | common |
-| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | 19-20 | 5,600 / 201 (99.0%) / 24.429 | —<br>A: 1,883<br>FL: 3,717 | common |
-| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | ksm | 154 / 14 (38.9%) / 4.757 | —<br>A: 39<br>FL: 115 | common |
+| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | 17 | 4,468 / 357 (96.2%) / 13.331 | —<br>A: 1,154<br>FL: 3,314 | common |
+| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | 18 | 18,486 / 1020 (98.6%) / 18.283 | —<br>A: 5,839<br>FL: 12,647 | common |
+| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | 19-20 | 5,637 / 202 (99.0%) / 24.496 | —<br>A: 1,899<br>FL: 3,738 | common |
+| knob-crossing-press | 片つまみ中、反対手によるつまみ側の A または FL の開始（左右反転、レーン数） | ksm | 89 / 11 (33.3%) / 3.011 | —<br>A: 16<br>FL: 73 | common |
 
 例: 「cloud」m9、「ALBIDA Powerless Mix」m37、「good high school」m8
 
@@ -185,9 +168,9 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| both-knobs-and-button | 両つまみが動く時刻のボタン開始（時刻数、レーン別内訳） | 17 | 3,271 / 300 (81.1%) / 9.789 | —<br>lane:A: 566<br>lane:B: 1,120<br>lane:C: 1,001<br>lane:D: 453<br>lane:FL: 595<br>lane:FR: 551 | common |
-| both-knobs-and-button | 両つまみが動く時刻のボタン開始（時刻数、レーン別内訳） | 18 | 11,518 / 886 (85.7%) / 11.402 | —<br>lane:A: 1,915<br>lane:B: 3,630<br>lane:C: 3,455<br>lane:D: 1,613<br>lane:FL: 2,110<br>lane:FR: 2,082 | common |
-| both-knobs-and-button | 両つまみが動く時刻のボタン開始（時刻数、レーン別内訳） | 19-20 | 3,913 / 190 (93.6%) / 17.069 | —<br>lane:A: 634<br>lane:B: 1,157<br>lane:C: 1,155<br>lane:D: 587<br>lane:FL: 797<br>lane:FR: 807 | common |
+| both-knobs-and-button | 両つまみが動く時刻のボタン開始（時刻数、レーン別内訳） | 17 | 3,271 / 300 (80.9%) / 9.76 | —<br>lane:A: 566<br>lane:B: 1,120<br>lane:C: 1,001<br>lane:D: 453<br>lane:FL: 595<br>lane:FR: 551 | common |
+| both-knobs-and-button | 両つまみが動く時刻のボタン開始（時刻数、レーン別内訳） | 18 | 11,518 / 886 (85.6%) / 11.391 | —<br>lane:A: 1,915<br>lane:B: 3,630<br>lane:C: 3,455<br>lane:D: 1,613<br>lane:FL: 2,110<br>lane:FR: 2,082 | common |
+| both-knobs-and-button | 両つまみが動く時刻のボタン開始（時刻数、レーン別内訳） | 19-20 | 3,913 / 190 (93.1%) / 17.004 | —<br>lane:A: 634<br>lane:B: 1,157<br>lane:C: 1,155<br>lane:D: 587<br>lane:FL: 797<br>lane:FR: 807 | common |
 | both-knobs-and-button | 両つまみが動く時刻のボタン開始（時刻数、レーン別内訳） | ksm | 0 / 0 (0.0%) / 0 | — | rare |
 
 例: 「天ノ弱」m34、「レトロスペクティビリー・メリーゴーランド」m52、「good high school」m37
@@ -196,10 +179,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | 17 | 24,052 / 370 (100.0%) / 71.977 | — | common |
-| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | 18 | 72,730 / 1031 (99.7%) / 71.998 | — | common |
-| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | 19-20 | 18,369 / 202 (99.5%) / 80.13 | — | common |
-| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | ksm | 403 / 23 (63.9%) / 12.45 | — | common |
+| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | 17 | 24,083 / 371 (100.0%) / 71.857 | — | common |
+| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | 18 | 72,761 / 1032 (99.7%) / 71.962 | — | common |
+| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | 19-20 | 18,396 / 203 (99.5%) / 79.941 | — | common |
+| slam-with-button | 直角と同 pulse のボタン開始集合（直角数、右直角を左右反転） | ksm | 314 / 20 (60.6%) / 10.622 | — | common |
 
 例: 「cloud」m0、「TYCOON」m7、「ALBIDA Powerless Mix」m5
 
@@ -207,10 +190,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | 17 | 44,886 / 370 (100.0%) / 134.325 | interval_ms [25/48.248/75/114.504/666.667]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 41<br>開始後<15pulse: 16,356 | common |
-| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | 18 | 142,362 / 1030 (99.6%) / 140.929 | interval_ms [16.892/40.541/70.922/95.238/532.544]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 365<br>開始後<15pulse: 46,729 | common |
-| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | 19-20 | 35,139 / 202 (99.5%) / 153.285 | interval_ms [26.596/36.9/62.5/82.418/450]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 69<br>開始後<15pulse: 10,816 | common |
-| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | ksm | 1,519 / 34 (94.4%) / 46.926 | interval_ms [88.235/88.235/88.235/157.068/1,548.387]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 0<br>開始後<15pulse: 543 | common |
+| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | 17 | 44,943 / 371 (100.0%) / 134.098 | interval_ms [25/48.428/75/114.504/666.667]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 41<br>開始後<15pulse: 16,373 | common |
+| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | 18 | 142,455 / 1031 (99.6%) / 140.89 | interval_ms [16.892/40.541/70.922/95.238/532.544]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 365<br>開始後<15pulse: 46,748 | common |
+| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | 19-20 | 35,217 / 203 (99.5%) / 153.038 | interval_ms [26.596/36.9/62.5/82.418/450]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 69<br>開始後<15pulse: 10,853 | common |
+| slam-interval | 同側の連続直角間隔（区間をまたぐ）。別途、区間開始から < 1/16 拍の直角も数える | ksm | 1,291 / 31 (93.9%) / 43.674 | interval_ms [88.235/88.235/88.235/165.751/1,588.235]<br>section_start_ms [0/0/0/0/0]<br>短間隔除外: 0<br>開始後<15pulse: 470 | common |
 
 例: 「Lucky*Clover」m90、「君は Fantasista」m40、「ARISE」m97
 
@@ -218,10 +201,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | 17 | 17,619 / 370 (100.0%) / 52.726 | reversal_interval_ms [7.508/9.058/11.848/17.689/198.529]<br>chart_min_reversal_ms [7.508/7.883/9.711/11.323/19.231]<br>短反転除外: 23,128 | common |
-| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | 18 | 54,923 / 1031 (99.7%) / 54.37 | reversal_interval_ms [2.815/6.505/9.294/13.838/162.162]<br>chart_min_reversal_ms [2.815/5.008/7.787/9.292/17.241]<br>短反転除外: 73,548 | common |
-| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | 19-20 | 12,169 / 202 (99.5%) / 53.084 | reversal_interval_ms [5.01/5.01/7.508/9.804/101.946]<br>chart_min_reversal_ms [5.01/5.049/7.485/8.74/12.5]<br>短反転除外: 17,929 | common |
-| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | ksm | 1,295 / 36 (100.0%) / 40.006 | reversal_interval_ms [157.068/157.068/157.068/157.068/352.941]<br>chart_min_reversal_ms [157.068/157.068/157.068/157.068/333.333]<br>短反転除外: 0 | common |
+| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | 17 | 17,686 / 371 (100.0%) / 52.77 | reversal_interval_ms [7.508/9.058/11.871/17.689/198.529]<br>chart_min_reversal_ms [7.508/7.884/9.711/11.333/19.381]<br>短反転除外: 23,128 | common |
+| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | 18 | 54,994 / 1032 (99.7%) / 54.39 | reversal_interval_ms [2.815/6.522/9.294/13.853/162.162]<br>chart_min_reversal_ms [2.815/5.01/7.788/9.294/17.241]<br>短反転除外: 73,548 | common |
+| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | 19-20 | 12,233 / 203 (99.5%) / 53.159 | reversal_interval_ms [5.01/5.01/7.508/9.804/105.21]<br>chart_min_reversal_ms [5.01/5.05/7.508/8.741/12.5]<br>短反転除外: 17,929 | common |
+| laser-zigzag | 同一区間の非直角傾斜の方向反転（反転数）。直角で連鎖を切り、静止は方向を保つ | ksm | 1,093 / 33 (100.0%) / 36.976 | reversal_interval_ms [157.068/157.068/157.068/176.471/352.941]<br>chart_min_reversal_ms [157.068/157.068/157.068/160.175/350.877]<br>短反転除外: 0 | common |
 
 例: 「cloud」m4、「TYCOON」m28、「ALBIDA Powerless Mix」m22
 
@@ -229,10 +212,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | 17 | 7,987 / 369 (99.7%) / 23.902 | duration_ms [8,302.326/2,280.702/4,691.864]<br>合計 2,225.825秒、開始 6,256時刻/7,898ボタン | common |
-| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | 18 | 26,489 / 1028 (99.4%) / 26.222 | duration_ms [613,861.299/2,475.888/5,342.559]<br>合計 8,027.808秒、開始 27,025時刻/34,286ボタン | common |
-| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | 19-20 | 6,695 / 202 (99.5%) / 29.205 | duration_ms [10,378.378/2,566.128/4,913.99]<br>合計 1,725.691秒、開始 9,111時刻/12,041ボタン | common |
-| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | ksm | 274 / 27 (75.0%) / 8.465 | duration_ms [6,760.563/3,280.626/6,125.635]<br>合計 166.027秒、開始 269時刻/360ボタン | common |
+| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | 17 | 8,014 / 370 (99.7%) / 23.912 | duration_ms [8,302.326/2,280.702/4,684.505]<br>合計 2,240.277秒、開始 6,318時刻/7,979ボタン | common |
+| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | 18 | 26,509 / 1029 (99.4%) / 26.218 | duration_ms [613,861.299/2,480.196/5,342.198]<br>合計 8,046.28秒、開始 27,085時刻/34,386ボタン | common |
+| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | 19-20 | 6,705 / 203 (99.5%) / 29.137 | duration_ms [10,378.378/2,571.203/4,911.726]<br>合計 1,736.688秒、開始 9,135時刻/12,068ボタン | common |
+| laser-crossing | 両レーザー有効中に左の表示位置 > 右となる連続区間（区間数・秒・交差中の開始） | ksm | 217 / 24 (72.7%) / 7.341 | duration_ms [6,760.563/3,006.765/6,148.449]<br>合計 122.105秒、開始 123時刻/152ボタン | common |
 
 例: 「LittleGameStar」m2、「キリカ」m95、「星の詩」m20
 
@@ -240,10 +223,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | 17 | 17,206 / 370 (100.0%) / 51.49 | gap_ms [36.496/47.75/112.5/200/1,363.636] | common |
-| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | 18 | 49,152 / 1031 (99.7%) / 48.657 | gap_ms [22.059/39.474/86.207/187.5/1,185.041] | common |
-| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | 19-20 | 11,377 / 202 (99.5%) / 49.629 | gap_ms [21.368/21.368/60.436/151.654/1,018.519] | common |
-| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | ksm | 576 / 36 (100.0%) / 17.794 | gap_ms [83.333/83.333/83.333/387.097/3,096.774] | common |
+| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | 17 | 17,221 / 371 (100.0%) / 51.383 | gap_ms [36.496/47.792/112.5/200/1,363.636] | common |
+| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | 18 | 49,167 / 1032 (99.7%) / 48.627 | gap_ms [22.059/39.474/86.207/187.5/1,186.047] | common |
+| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | 19-20 | 11,398 / 203 (99.5%) / 49.531 | gap_ms [21.368/21.368/61.345/151.654/1,019.022] | common |
+| laser-gap | 同側の隣接区間の端点が通常幅の > 0.25 飛ぶもの（隙間 ms、0 も含む） | ksm | 525 / 33 (100.0%) / 17.76 | gap_ms [83.333/83.333/83.333/505.882/3,096.774] | common |
 
 例: 「Pixelated Platform」m60、「Ö<3rf10₩」m37、「革命パッショネイト」m5
 
@@ -251,10 +234,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | 17 | 15,983 / 366 (98.9%) / 47.83 | —<br>leave: 1011 | common |
-| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | 18 | 55,515 / 1019 (98.5%) / 54.956 | —<br>leave: 3942 | common |
-| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | 19-20 | 15,580 / 202 (99.5%) / 67.964 | —<br>leave: 1446 | common |
-| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | ksm | 938 / 20 (55.6%) / 28.977 | —<br>leave: 60 | common |
+| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | 17 | 16,147 / 367 (98.9%) / 48.178 | —<br>leave: 1029 | common |
+| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | 18 | 55,588 / 1020 (98.6%) / 54.977 | —<br>leave: 3943 | common |
+| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | 19-20 | 15,640 / 203 (99.5%) / 67.965 | —<br>leave: 1450 | common |
+| hold-and-chip | 保持手の到達範囲の他レーン chip、および反対手占有中に到達範囲を超える chip（hold×chip 対数） | ksm | 641 / 17 (51.5%) / 21.685 | —<br>leave: 37 | common |
 
 例: 「TYCOON」m23、「天ノ弱」m89、「レトロスペクティビリー・メリーゴーランド」m5
 
@@ -262,10 +245,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | 17 | 23,626 / 368 (99.5%) / 70.703 | interval_ms [64.935/78.125/136.364/175.439/693.642]<br><75ms: 16 | common |
-| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | 18 | 66,505 / 1027 (99.3%) / 65.835 | interval_ms [16.892/69.444/101.351/156.25/610.86]<br><75ms: 109 | common |
-| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | 19-20 | 15,203 / 202 (99.5%) / 66.319 | interval_ms [43.478/63.669/81.081/136.364/510.638]<br><75ms: 104 | common |
-| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | ksm | 531 / 31 (86.1%) / 16.404 | interval_ms [105.634/132.894/157.068/185.009/1,153.846]<br><75ms: 0 | common |
+| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | 17 | 23,654 / 369 (99.5%) / 70.577 | interval_ms [64.935/78.125/136.364/175.439/693.642]<br><75ms: 16 | common |
+| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | 18 | 66,524 / 1028 (99.3%) / 65.793 | interval_ms [16.892/69.444/101.351/156.25/611.111]<br><75ms: 109 | common |
+| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | 19-20 | 15,226 / 203 (99.5%) / 66.165 | interval_ms [43.478/63.682/81.081/136.364/510.638]<br><75ms: 104 | common |
+| long-end-to-chip | 同レーン直前 long の終端→次の chip（間に別の同レーン開始なし、間隔上限なし） | ksm | 461 / 28 (84.8%) / 15.595 | interval_ms [105.634/129.294/157.068/211.268/1,166.667]<br><75ms: 0 | common |
 
 例: 「Sephirot」m42、「Circuit Surfer」m29、「Demetel (Erixa ”MYTH” Remix)」m22
 
@@ -275,8 +258,8 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 |---|---|---|---|---|---|
 | short-long | 長さ < 1/8 拍 = 30 pulse の BT/FX long（ノート数、全 long の長さも集計） | 17 | 0 / 0 (0.0%) / 0 | all_long_beats [25.375/6/12] | rare |
 | short-long | 長さ < 1/8 拍 = 30 pulse の BT/FX long（ノート数、全 long の長さも集計） | 18 | 0 / 0 (0.0%) / 0 | all_long_beats [40/7/15] | rare |
-| short-long | 長さ < 1/8 拍 = 30 pulse の BT/FX long（ノート数、全 long の長さも集計） | 19-20 | 29 / 4 (2.0%) / 0.127 | all_long_beats [48/8/16.5]<br>short_beats [0.083/0.083/0.083] | rare |
-| short-long | 長さ < 1/8 拍 = 30 pulse の BT/FX long（ノート数、全 long の長さも集計） | ksm | 0 / 0 (0.0%) / 0 | all_long_beats [18/6.94/16.047] | rare |
+| short-long | 長さ < 1/8 拍 = 30 pulse の BT/FX long（ノート数、全 long の長さも集計） | 19-20 | 29 / 4 (2.0%) / 0.126 | all_long_beats [48/8/16.5]<br>short_beats [0.083/0.083/0.083] | rare |
+| short-long | 長さ < 1/8 拍 = 30 pulse の BT/FX long（ノート数、全 long の長さも集計） | ksm | 0 / 0 (0.0%) / 0 | all_long_beats [18/6.13/16.157] | rare |
 
 例: 「色を喪った街」m37、「すべてが幻になった後で」m21、「色を喪った街」m38
 
@@ -284,10 +267,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | 17 | 3,588 / 295 (79.7%) / 10.737 | —<br>1/24: 1,627<br>1/32: 393<br>1/48: 1,486<br>1/64: 50<br>1/96: 32 | common |
-| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | 18 | 25,147 / 846 (81.8%) / 24.894 | —<br>1/24: 10,899<br>1/32: 5,567<br>1/48: 6,980<br>1/64: 1,366<br>1/96: 335 | common |
-| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | 19-20 | 12,110 / 187 (92.1%) / 52.827 | —<br>1/24: 4,983<br>1/32: 3,100<br>1/48: 3,393<br>1/64: 511<br>1/96: 123 | common |
-| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | ksm | 4 / 1 (2.8%) / 0.124 | —<br>1/32: 4 | rare |
+| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | 17 | 3,592 / 296 (79.8%) / 10.718 | —<br>1/24: 1,627<br>1/32: 397<br>1/48: 1,486<br>1/64: 50<br>1/96: 32 | common |
+| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | 18 | 25,147 / 846 (81.7%) / 24.871 | —<br>1/24: 10,899<br>1/32: 5,567<br>1/48: 6,980<br>1/64: 1,366<br>1/96: 335 | common |
+| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | 19-20 | 12,110 / 187 (91.7%) / 52.625 | —<br>1/24: 4,983<br>1/32: 3,100<br>1/48: 3,393<br>1/64: 511<br>1/96: 123 | common |
+| offgrid | 全音符 1/16 (=60 pulse)・1/12 (=80 pulse) のどちらにも乗らないボタン開始（レーン数） | ksm | 0 / 0 (0.0%) / 0 | — | rare |
 
 例: 「レトロスペクティビリー・メリーゴーランド」m9、「ALBIDA Powerless Mix」m1、「smooooch・∀・ KN mix」m17
 
@@ -295,10 +278,10 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | 17 | 12,359 / 365 (98.6%) / 36.985 | —<br>100ボタン開始あたり 4.525 | common |
-| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | 18 | 41,161 / 1018 (98.5%) / 40.747 | —<br>100ボタン開始あたり 4.594 | common |
-| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | 19-20 | 10,027 / 202 (99.5%) / 43.74 | —<br>100ボタン開始あたり 4.382 | common |
-| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | ksm | 761 / 20 (55.6%) / 23.509 | —<br>100ボタン開始あたり 5.22 | common |
+| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | 17 | 12,469 / 366 (98.7%) / 37.204 | —<br>100ボタン開始あたり 4.55 | common |
+| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | 18 | 41,231 / 1019 (98.5%) / 40.778 | —<br>100ボタン開始あたり 4.598 | common |
+| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | 19-20 | 10,065 / 203 (99.5%) / 43.738 | —<br>100ボタン開始あたり 4.383 | common |
+| fx-long-with-bt-chips | FL 保持中の A/B chip、および FR 保持中の C/D chip（対数） | ksm | 543 / 17 (51.5%) / 18.369 | —<br>100ボタン開始あたり 4.476 | common |
 
 例: 「cloud」m21、「TYCOON」m4、「ALBIDA Powerless Mix」m8
 
@@ -317,9 +300,9 @@ SDVX: 1706 統計行中 usable 不適合 99（元 decode エラー 5 を含む�
 
 | id | 何を数えるか | 群 | 頻度 | 分布・閾値 | 仮判定 |
 |---|---|---|---|---|---|
-| wide-laser | 幅指定が 2 のレーザー区間（区間数） | 17 | 6,745 / 337 (91.1%) / 20.185 | duration_ms [29,561.404/9,365.333/23,461.615] | common |
-| wide-laser | 幅指定が 2 のレーザー区間（区間数） | 18 | 18,560 / 900 (87.0%) / 18.373 | duration_ms [49,406.25/10,808.066/20,422.865] | common |
-| wide-laser | 幅指定が 2 のレーザー区間（区間数） | 19-20 | 5,036 / 189 (93.1%) / 21.968 | duration_ms [24,714.286/10,428.513/19,174.21] | common |
+| wide-laser | 幅指定が 2 のレーザー区間（区間数） | 17 | 6,745 / 337 (90.8%) / 20.125 | duration_ms [29,561.404/9,365.333/23,461.615] | common |
+| wide-laser | 幅指定が 2 のレーザー区間（区間数） | 18 | 18,560 / 900 (87.0%) / 18.356 | duration_ms [49,406.25/10,808.066/20,422.865] | common |
+| wide-laser | 幅指定が 2 のレーザー区間（区間数） | 19-20 | 5,036 / 189 (92.6%) / 21.884 | duration_ms [24,714.286/10,428.513/19,174.21] | common |
 | wide-laser | 幅指定が 2 のレーザー区間（区間数） | ksm | 0 / 0 (0.0%) / 0 | — | rare |
 
 例: 「銃弾は解を撃ち抜いて」m44、「AYAKASHI」m48、「ヒミツダイヤル」m21
@@ -337,10 +320,10 @@ jack-mixed（主表の2分類に入らない区間）:
 
 | 群 | 出現数 | 譜面数 | 100小節あたり |
 |---|---:|---:|---:|
-| 17 | 176,417 | 370 | 527.942 |
-| 18 | 583,172 | 1033 | 577.301 |
-| 19-20 | 149,712 | 203 | 653.08 |
-| ksm | 8,437 | 35 | 260.643 |
+| 17 | 176,815 | 371 | 527.57 |
+| 18 | 583,686 | 1034 | 577.273 |
+| 19-20 | 150,149 | 204 | 652.481 |
+| ksm | 7,088 | 32 | 239.783 |
 
 ## 判断が割れそうなもの
 

@@ -12,6 +12,12 @@ from ksmauto.timing import TimingMap
 GRAM = Path(__file__).parent / "fixtures" / "libkson" / "Gram_ex.ksh"
 
 
+
+@pytest.fixture(autouse=True)
+def no_verdicts(monkeypatch):
+    # Tests that need verdicts set their own; the shipped ones must not leak in.
+    monkeypatch.setattr('ksmauto.lint.placement_verdicts', lambda: {})
+
 def _chart(bt=None, fx=None, laser=None, bpm=120.0):
     return {
         "format_version": 1,
@@ -141,7 +147,8 @@ def test_effective_hands(demands, lanes, expected):
 
 
 @pytest.mark.parametrize('verdict,level,rule', [('allow', 17, None), ('forbid', 18, 'placement-forbidden'),
-    ({'min_level': 18}, 17.5, 'placement-min-level'), ({'min_level': 18}, 18, None)])
+    ({'min_level': 18}, 17.4, 'placement-min-level'), ({'min_level': 18}, 17.5, None),
+    ({'min_level': 19}, 18.9, 'placement-min-level'), ({'min_level': 19}, 19, None)])
 @pytest.mark.parametrize('overload', [False, True])
 def test_category_verdict_overrides_frequency_and_safe_hand_count(monkeypatch, verdict, level, rule, overload):
     policy = deepcopy(hand_policy())
@@ -337,7 +344,8 @@ def test_jack_band_lower_edge_is_not_warning(monkeypatch):
 
 
 @pytest.mark.parametrize('verdict,level,rule', [('allow', 17, None), ('forbid', 17, 'placement-forbidden'),
-    ({'min_level': 18}, 17.5, 'placement-min-level'), ({'min_level': 18}, 18, None)])
+    ({'min_level': 18}, 17.4, 'placement-min-level'), ({'min_level': 18}, 17.5, None),
+    ({'min_level': 19}, 18.9, 'placement-min-level'), ({'min_level': 19}, 19, None)])
 def test_jack_row_verdict(monkeypatch, verdict, level, rule):
     c = _chart(bt=[[0, 10], [], [], []])
     c['meta']['level'] = level
