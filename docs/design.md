@@ -34,3 +34,20 @@ audio ──analyze──▶ analysis.json ──(LLM)──▶ draft (中間DSL
 
 - `scripts/fetch_corpus.py` が公式配布物から既定曲（10曲 / 36譜面、音源つき）を `corpus/official/` に取り出す。
 - `corpus/` は再配布しない（`.gitignore` 済み）。コーパスに依存するテストは、無ければ skip する。
+
+## 拍・テンポマップ
+
+`uv sync --extra beats` で [Beat This!](https://github.com/CPJKU/beat_this)（コード・重み MIT）を導入。
+`ksmauto beats SONG -o beats.json [--model final0|small0] [--min-bpm 120 --max-bpm 240]`
+は File2Beats を遅延 import し CPU・dbn=False で実行する。
+拍間隔の移動中央値でテンポが 3% 以内に続く拍の並び（8 拍以上）を区間とし、区間ごとに拍時刻へ直線を当てる
+（裏拍に乗った・余分な拍はグリッドから外れるので除く）。区間 BPM は指定範囲へ倍・半分補正し、
+補正後のテンポで小節を数える（半分テンポで追った区間は 1 downbeat 間が 2 小節になる）。
+拍子と小節頭の位相は区間内の downbeat から取る。隣の区間と 2% 以内で直線が乗るなら 1 区間にまとめる。
+変化点の小節は前区間のグリッドを延ばした小節線のうち、次区間の小節線と位相が最も合うものにする。
+このため不安定な拍（つなぎ・フィル）は無視しても後ろの小節番号はずれない。
+JSON は生の beats/downbeats（秒）、offset_ms（最初の区間の小節線）、segments（小節・BPM・拍数）、tempo_arg、warnings。
+無視した区間・倍半分補正・長い拍間（フェルマータ・ブレイク）・拍子変化の疑い・徐々なテンポ変化は警告し、手動確認する。拍子変化は報告のみ。
+`analyze --beats beats.json` は segments の BPM と最初の拍数、offset を読み、`--tempo/--offset` 相当で解析する。
+従来の `analyze --beats 4` も受理する。JSON と明示 tempo/offset の併用はエラー。
+自動テンポ推定時は前後 1/3 の推定が倍・半分補正後も 3% 超異なると警告する。

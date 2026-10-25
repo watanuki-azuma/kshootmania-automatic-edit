@@ -39,6 +39,7 @@ def test_click_track_tempo_and_offset(tmp_path, bpm, offset):
     # Synthetic clicks have instantaneous attacks and read ~20 ms earlier than music.
     assert min(err, beat_ms - err) <= 30
     assert a["measures"] and a["sections"]
+    assert a["warnings"] == []
     assert to_text(a).startswith(f"BPM {bpm:g}")
 
 
@@ -175,3 +176,36 @@ def test_stem_uses_transcribed_notes(tmp_path, row):
     else:
         assert [h for _, h in st["onsets"][row]] == [1.0, 1.0, 1.0]
         assert header.split()[-1] == "olane" and "plane" not in header.split()
+
+
+@pytest.mark.parametrize('early,late,warn', [(140, 190, True), (150, 150, False),
+                                            (95, 190, False), (150, 153, False)])
+def test_tempo_warning_slices(monkeypatch, early, late, warn):
+    from ksmauto.analyze import _tempo_warnings
+    ends = []
+    def estimate(env, fps):
+        ends.append(env.copy())
+        return (early if len(ends) == 1 else late), 0.8, []
+    monkeypatch.setattr('ksmauto.analyze._estimate_tempo', estimate)
+    env = np.arange(2400, dtype=float)
+    warnings = _tempo_warnings(env, 100)
+    assert bool(warnings) is warn
+    assert np.array_equal(ends[0], env[:800])
+    assert np.array_equal(ends[1], env[-800:])
+
+
+def test_beats_file_matches_explicit_timing(tmp_path, monkeypatch):
+    from ksmauto.analyze import main
+    p = tmp_path / 'beats.json'
+    p.write_text(json.dumps({'segments': [[0, 140, 4], [11, 190, 4]], 'offset_ms': 490,
+                             'warnings': ['check downbeats']}))
+    calls = []
+    def fake_analyze(audio, **kw):
+        calls.append(kw)
+        return {'warnings': []}
+    monkeypatch.setattr('ksmauto.analyze.analyze', fake_analyze)
+    out = tmp_path / 'analysis.json'
+    assert main(['song.ogg', '--beats', str(p), '-o', str(out)]) == 0
+    assert calls == [{'beats_per_measure': 4, 'tempo': [[0, 140], [11, 190]],
+                      'offset_ms': 490, 'stems': None}]
+    assert json.loads(out.read_text())['warnings'] == ['check downbeats']

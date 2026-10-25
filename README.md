@@ -7,7 +7,7 @@ LLM（Claude / GPT）で K-Shoot MANIA の譜面（KSON）を作るためのツ�
 ## セットアップ
 
 ```sh
-uv sync --extra audio --extra render
+uv sync --extra audio --extra render --extra beats
 uv sync --extra audio --extra render --extra stems   # 音源分離も使う場合（PyTorch が入る。CPU 版で十分）
 uv sync --extra audio --extra render --extra stems --extra transcribe   # ピアノの採譜も使う場合
 uv run python scripts/fetch_corpus.py   # 公式既定曲を corpus/ に取得（任意。テスト・評価用）
@@ -18,6 +18,8 @@ uv run pytest
 
 | コマンド | 内容 |
 |---|---|
+| `ksmauto beats SONG.ogg -o beats.json` | Beat This! で拍・小節頭とテンポマップを推定（`beats` extra、CPU、初回は重みを取得） |
+| `ksmauto analyze SONG.ogg --beats beats.json ...` | 検出したテンポ区間と offset で解析 |
 | `ksmauto analyze SONG.ogg -o a.json --text a.txt` | BPM・offset・小節頭・帯域別オンセット・セクションを解析 |
 | `ksmauto analyze SONG.ogg --tempo 0:141,53:138.2 --offset 1074 ...` | テンポが変わる曲: テンポマップと offset を指定して解析し直す |
 | `ksmauto separate SONG.ogg -o stems/` | Demucs でボーカル・ドラム・ベース・その他に分離（`stems` extra。PyTorch CPU 版で 2 分の曲に約 1 分） |

@@ -278,6 +278,23 @@ def _sections(feat: np.ndarray, n_measures: int) -> list[dict]:
     return [{"start": s, "end": e, "label": lab} for (s, e), lab in zip(segs, labels)]
 
 
+def _tempo_warnings(env: np.ndarray, fps: float) -> list[str]:
+    """Compare sufficiently long, non-silent ends, ignoring metrical octaves."""
+    third = len(env) // 3
+    if third < 6 * fps:
+        return []
+    ends = (env[:third], env[-third:])
+    if any(np.max(e) <= 1e-8 or np.ptp(e) <= 1e-8 for e in ends):
+        return []
+    early, _, _ = _estimate_tempo(ends[0], fps)
+    late, _, _ = _estimate_tempo(ends[1], fps)
+    ratio = late / early
+    ratio /= 2 ** round(np.log2(ratio))
+    if abs(ratio - 1) > 0.03:
+        return ["Tempo differs between first and last thirds; run ksmauto beats to check tempo changes."]
+    return []
+
+
 def analyze(path: str | Path, beats_per_measure: int = 4, tempo: list[list[float]] | None = None,
             offset_ms: int | None = None, stems: str | Path | None = None) -> dict:
     """`tempo` ([[measure, bpm], ...]) and `offset_ms` override the estimates, for
@@ -294,6 +311,8 @@ def analyze(path: str | Path, beats_per_measure: int = 4, tempo: list[list[float
     env_all = _band_flux(S, freqs, 20.0, 11000.0)
     # Percussive-leaning envelope for tempo/phase: kick + snare + hats.
     env = bands["low"] + 0.6 * bands["mid"] + 0.4 * bands["high"] + env_all
+
+    warnings = _tempo_warnings(env, fps) if not tempo else []
 
     if tempo:
         tempo = sorted([int(m), float(b)] for m, b in tempo)
@@ -367,6 +386,7 @@ def analyze(path: str | Path, beats_per_measure: int = 4, tempo: list[list[float
             "changes": [[m, b] for m, b in tempo[1:]],
             "time_sig": [beats_per_measure, 4],
         },
+        "warnings": warnings,
         "offset_ms": int(round(offset_sec * 1000)),
         "measures": measures,
         "sections": sections,
@@ -566,6 +586,7 @@ def to_text(a: dict) -> str:
         f"{t['time_sig'][0]}/{t['time_sig'][1]}  duration {a['audio']['duration_sec']:.1f}s  measures 0-{len(ms) - 1}",
         "sections: " + " | ".join(f"{s['label']} m{s['start']}-{s['end'] - 1} ({s['energy']:.2f})" for s in a["sections"]),
     ]
+    lines = [f"warning: {w}" for w in a.get("warnings", [])] + lines
     if stems:
         values = [p for m in ms for _, p in m["stems"]["vocal_pitch"]]
         lo, hi = (np.percentile(values, [5, 95]) if values else (60.0, 72.0))
@@ -599,13 +620,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("audio")
     p.add_argument("-o", "--output", help="analysis JSON path (default: stdout)")
     p.add_argument("--text", help="also write the LLM-readable text summary here")
-    p.add_argument("--beats", type=int, default=4, help="beats per measure (default 4)")
+    p.add_argument("--beats", default="4", help="beats JSON from ksmauto beats (or legacy beats per measure)")
     p.add_argument("--tempo", help="fixed tempo map 'MEASURE:BPM,...', e.g. 0:141,53:138.4,63:141")
     p.add_argument("--offset", type=int, help="fixed offset in ms (measure 0 start)")
     p.add_argument("--stems", help="stem directory from `ksmauto separate` (adds per-instrument rows)")
     args = p.parse_args(argv)
     tempo = [[int(m), float(b)] for m, b in (x.split(":") for x in args.tempo.split(","))] if args.tempo else None
-    a = analyze(args.audio, beats_per_measure=args.beats, tempo=tempo, offset_ms=args.offset, stems=args.stems)
+    beat_data = None
+    if args.beats.isdigit():
+        beats_per_measure = int(args.beats)
+    else:
+        if args.tempo or args.offset is not None:
+            p.error("--beats JSON cannot be combined with --tempo/--offset")
+        beat_data = json.loads(Path(args.beats).read_text(encoding="utf-8"))
+        tempo = [[m, b] for m, b, _ in beat_data["segments"]]
+        args.offset = beat_data["offset_ms"]
+        beats_per_measure = beat_data["segments"][0][2]
+    a = analyze(args.audio, beats_per_measure=beats_per_measure, tempo=tempo, offset_ms=args.offset, stems=args.stems)
+    if beat_data:
+        a["warnings"].extend(beat_data.get("warnings", []))
     js = json.dumps(a, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(js + "\n", encoding="utf-8")

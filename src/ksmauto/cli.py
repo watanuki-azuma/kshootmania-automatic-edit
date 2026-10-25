@@ -101,6 +101,9 @@ def main(argv=None):
             print("install the audio extra: uv sync --extra audio", file=sys.stderr)
             return 1
         return analyze_main(argv[1:])
+    if argv and argv[0] == "beats":
+        from .beats import main as beats_main
+        return beats_main(argv[1:])
     if argv and argv[0] == "separate":
         from .separate import main as separate_main
         return separate_main(argv[1:])
@@ -122,6 +125,7 @@ def main(argv=None):
         draft.add_argument("-o", "--output", type=Path)
         if command == "compile":
             draft.add_argument("--base", type=Path)
+    sub.add_parser("beats", help="track beats/downbeats and suggest a tempo map (requires beats extra)")
     sub.add_parser("analyze", help="analyze audio (requires the audio extra)")
     sub.add_parser("separate", help="split audio into vocal/drum/bass/other (+piano/guitar) stems (requires demucs)")
     sub.add_parser("transcribe", help="transcribe audio into notes (ByteDance or MuScriptor)")

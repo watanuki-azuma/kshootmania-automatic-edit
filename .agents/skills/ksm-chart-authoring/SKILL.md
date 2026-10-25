@@ -5,33 +5,51 @@ description: K-Shoot MANIA の譜面（KSON）を音源から作る・既存譜�
 
 # K-Shoot MANIA 譜面作成
 
-ツールはこのリポジトリの `ksmauto` CLI（`uv run ksmauto ...`）。初回は `uv sync --extra audio --extra render`。
+ツールはこのリポジトリの `ksmauto` CLI（`uv run ksmauto ...`）。初回は `uv sync --extra audio --extra render --extra stems --extra transcribe --extra beats`。新しいセッションでは extras が消えていることがある。「not installed」が出たらこの sync を再実行する。
 
 ## 手順
 
-### 1. 音源を解析する
+### 0. 入力を用意する
+
+音源・譜面・作業ファイルは private な `out/曲名/` に置く（以下の `out/work/` は作業先の例）。動画（.mkv/.mp4/.webm）なら先に音声を取り出す:
 
 ```sh
-uv run ksmauto separate SONG.ogg -o work/stems     # 音源分離（stems extra = demucs が必要）
-uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text work/analysis.txt
+ffmpeg -i in.mkv -vn -c:a libvorbis -q:a 6 out/work/song.ogg
+```
+
+曲名・作曲者はユーザーの指定か動画のフレームから確認する。目標レベルの指定がなければ質問するか、仮のレベルを明示して進める（例:「今回は Lv17 を目標にします」）。
+
+### 1. 音源を解析する
+
+まず Beat This!（CPU）で拍・小節頭を取り、`beats.json` の `segments` と `warnings` を読む:
+
+```sh
+uv run ksmauto beats SONG.ogg -o out/work/beats.json --min-bpm 120 --max-bpm 240
+```
+
+`segments` は `[開始小節, BPM, 小節内の拍数]`。倍・半分は指定範囲へ補正し、小節もそのテンポで数える。つなぎの不安定な拍は無視し、変化小節は前後のグリッドが合う位置に置く（`unstable beats ignored` の警告に秒が出るので、そこは耳で確かめる）。拍子変化は報告のみで analyze には適用しない。フェルマータ・リタルダンドの警告が出たら手動で確認する。
+
+```sh
+uv run ksmauto separate SONG.ogg -o out/work/stems     # 音源分離（stems extra = demucs が必要）
+uv run ksmauto analyze SONG.ogg --beats out/work/beats.json --stems out/work/stems -o out/work/analysis.json --text out/work/analysis.txt
 ```
 
 ピアノが主役の区間がある曲は 6 ステムに分けてピアノを採譜する（`plane` 列が増える。`other` から拾うより音程・発音ともずっと正確）:
 
 ```sh
-uv run ksmauto separate SONG.ogg -o work/stems --model htdemucs_6s
-uv run ksmauto transcribe work/stems/piano.wav      # transcribe extra が必要。work/stems/piano.notes.json を書く
-uv run ksmauto analyze SONG.ogg --stems work/stems -o work/analysis.json --text work/analysis.txt
+uv run ksmauto separate SONG.ogg -o out/work/stems --model htdemucs_6s
+uv run ksmauto transcribe out/work/stems/piano.wav      # transcribe extra が必要。out/work/stems/piano.notes.json を書く
+uv run ksmauto analyze SONG.ogg --beats out/work/beats.json --stems out/work/stems -o out/work/analysis.json --text out/work/analysis.txt
 ```
 
-`transcribe` が「not installed」で止まるときは飛ばしてよい（`plane` は音から取った精度の低いものになる）。
+`transcribe` が「not installed」で止まるときはまず sync を再実行する。導入できない場合は飛ばし、`plane` の精度が低いことを伝える。
 
-任意で MuScriptor を使うなら、別の Python 3.12 venv に `muscriptor>=0.4` を入れ、`uv run ksmauto transcribe SONG.ogg --engine muscriptor --model small --python /tmp/musvenv/bin/python -o work/stems` でミックスを採譜できる（CPU は `small` 推奨）。重みは非商用の CC BY-NC 4.0 で、Hugging Face で使うモデルのライセンス承諾と `HF_TOKEN` の設定が必要。`other` / `piano` の JSON は対応する wav があるとき `analyze --stems` が使い、強さは全音 1.0。
+任意で MuScriptor を使うなら、別の Python 3.12 venv に `muscriptor>=0.4` を入れ、`uv run ksmauto transcribe SONG.ogg --engine muscriptor --model small --python /tmp/musvenv/bin/python -o out/work/stems` でミックスを採譜できる（CPU は `small` 推奨）。重みは非商用の CC BY-NC 4.0 で、Hugging Face で使うモデルのライセンス承諾と `HF_TOKEN` の設定が必要。`other` / `piano` の JSON は対応する wav があるとき `analyze --stems` が使い、強さは全音 1.0。
 
 demucs が入っていない（`separate` が「demucs is not installed」で止まる）ときは分離を飛ばし、`--stems` なしで解析する:
 
 ```sh
-uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
+uv run ksmauto analyze SONG.ogg --beats out/work/beats.json -o out/work/analysis.json --text out/work/analysis.txt
 ```
 
 `analysis.txt` を読む。先頭に BPM・offset・セクション、以下に小節ごとの 16 分グリッド（`X` 強、`x` 弱。3連の小節は 12 分割で `|` 区切り）。
@@ -48,9 +66,10 @@ uv run ksmauto analyze SONG.ogg -o work/analysis.json --text work/analysis.txt
 - `piano` `plane`: 6 ステム分離のときだけ。ピアノの発音と、その高さの A〜D。ピアノの区間は `olane` より `plane` を使う。
 
 確認すること:
-- BPM の信頼度（conf）が低い、候補が割れている → 候補の倍・半分を疑う。曲のノリ（体感テンポ）が 120〜240 に入る方を取る。
-- **途中でテンポが変わる曲**: 解析は一定テンポを仮定する。ある小節から先でグリッドの `X` が拍頭から一様にずれていく（裏拍や 3 連グリッドばかりになる）ならテンポ変化を疑い、キックの間隔からテンポを測って `uv run ksmauto analyze SONG --tempo 0:141,53:138.2,63:141 --offset 1074 ...` で解析し直す。ドラフトにも同じ位置に `bpm 0 138.2` を書く。
-- **小節の頭がずれていることがある**（拍は合っているが 1〜3 拍ずれる）。`low` の `X` が拍頭に揃い、セクション境界が 4・8 小節の区切りに来るように offset を `+ n * 60000/BPM` ms 調整する。
+- キックの `X` が拍頭、セクション境界が 4/8 小節線、ピアノの 8 分がグリッドに乗るかを目で確認する。普通の曲で 3 連グリッドの小節が大量に出たら、テンポが違う可能性が高い。
+- 倍・半分のテンポを疑う。イントロ・アウトロだけ別テンポ、または自由拍の曲もある。自動検出値をそのまま信用せず、`downbeats` の時刻も確認する。
+- 途中でずれるならキックやピアノの間隔から測り、`--beats` を外して `--tempo 0:140,11:190 --offset 486` のように指定し直す。ドラフトは `bpm: 140`、変化小節に `@m11` と `bpm 0 190`（参照: `references/draft-format.md`）。
+- 拍が合っても小節頭が 1〜3 拍ずれることがある。セクション境界を見て offset を `+ n * 60000/BPM` ms 調整する。
 
 ### 2. 構成と密度を決める（書く前に）
 
@@ -87,10 +106,10 @@ copy m4-11 -> m12 mirror
 ### 4. コンパイルと自己確認
 
 ```sh
-uv run ksmauto compile work/draft.ksmd -o work/chart.kson
-uv run ksmauto lint work/draft.ksmd --analysis work/analysis.json
-uv run ksmauto stats work/draft.ksmd
-uv run ksmauto render work/draft.ksmd --measures 0-31 -o work/page.png
+uv run ksmauto compile out/work/draft.ksmd -o out/work/chart.kson
+uv run ksmauto lint out/work/draft.ksmd --analysis out/work/analysis.json
+uv run ksmauto stats out/work/draft.ksmd
+uv run ksmauto render out/work/draft.ksmd --measures 0-31 -o out/work/page.png
 ```
 
 - compile エラーは全件まとめて出る。行番号の箇所を直す。
@@ -99,28 +118,28 @@ uv run ksmauto render work/draft.ksmd --measures 0-31 -o work/page.png
 - stats の `level_estimate` が目標 ±1.5 に入るまで密度を調整する。
 - render の PNG を開いて目で見る: 同じ形の繰り返しが単調すぎないか、レーザーとボタンが同じ手に重なっていないか、山場で密度が上がっているか。
 - FX の使い方を「FX の使い方」の表と比べる: FX チップが BT のついでばかりになっていないか、FX ロング（短いもの）と L+R 同時があるか。
-- 配置の偏りを `references/charting-guide.md` の「配置パターン」と比べる。レーザー中の空き手が C/D だけになっていないか（実譜面では FX-R と B が合わせて 3 割強）、16 分が 1 つの形に偏っていないか。手元にコーパスがあれば `uv run python tests/eval/sdvxin_patterns.py --chart work/chart.kson` で同じ集計が出る。
+- 配置の偏りを `references/charting-guide.md` の「配置パターン」と比べる。レーザー中の空き手が C/D だけになっていないか（実譜面では FX-R と B が合わせて 3 割強）、16 分が 1 つの形に偏っていないか。手元にコーパスがあれば `uv run python tests/eval/sdvxin_patterns.py --chart out/work/chart.kson` で同じ集計が出る。
 
 ### 5. 仕上げ
 
 - 完成した `chart.kson` を音源と同じフォルダに置く（`audio:` は相対ファイル名）。
-- 再生して確認・共有する場合: `uv run ksmauto preview work/draft.ksmd -o work/preview.html`（音源は `audio:` から自動で埋め込む。1 ファイルで開ける）。
-- 人が仕上げる場合: `uv run ksmauto edit work/chart.kson --audio SONG.ogg --analysis work/analysis.json` でブラウザエディタを開く（音源と同期再生・手で修正・保存）。
+- 再生して確認・共有する場合: `uv run ksmauto preview out/work/draft.ksmd -o out/work/preview.html`（vendored KSM-WEB-VIEWER のページに音源と譜面を埋め込む。1 ファイルで開ける）。preview ファイルなしで開くなら https://watanuki-azuma.github.io/KSM-WEB-VIEWER/ に譜面と音源を渡す（`viewer` コマンドはない）。
+- 人が仕上げる場合: `uv run ksmauto edit out/work/chart.kson --audio SONG.ogg --analysis out/work/analysis.json` でブラウザエディタを開く（音源と同期再生・手で修正・保存）。
 - FX ロング・レーザーの音のエフェクトと FX チップのキー音は DSL で書ける（`references/draft-format.md` の「オーディオエフェクト」、使い分けは `references/charting-guide.md` の「FX の使い方」）。preview で再生すると近似の音で確かめられる。
 - カメラ、背景、エフェクトのパラメータ変化（`param_change`）は DSL の対象外。既存譜面を直す場合は `--base 元.kson` で compile すれば保持される。
 
 ## 既存譜面を読む・直す
 
 ```sh
-uv run ksmauto decompile OLD.ksh -o work/old.ksmd      # 読みやすい DSL にする
+uv run ksmauto decompile OLD.ksh -o out/work/old.ksmd      # 読みやすい DSL にする
 # 編集して
-uv run ksmauto compile work/old.ksmd --base OLD.ksh -o work/fixed.kson
+uv run ksmauto compile out/work/old.ksmd --base OLD.ksh -o out/work/fixed.kson
 ```
 
 参考にしたい譜面があるときは、同じレベル帯の譜面を decompile して配置を読む（どちらも手元専用。中身をリポジトリや成果物に写さない）:
 
 - Lv16 以下: `corpus/official/` の公式譜面（`.ksh`）
-- Lv17〜20: `corpus/sdvxin_full/<フォルダ>/<キー>/`（`meta.json` に曲名・レベル）。`uv run ksmauto sdvxin DIR -o work/ref.kson` で KSON に復元してから decompile する。オフセットは無いので配置の読み取り専用
+- Lv17〜20: `corpus/sdvxin_full/<フォルダ>/<キー>/`（`meta.json` に曲名・レベル）。`uv run ksmauto sdvxin DIR -o out/work/ref.kson` で KSON に復元してから decompile する。オフセットは無いので配置の読み取り専用
 
 ## 参照
 
